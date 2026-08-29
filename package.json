@@ -1,0 +1,35 @@
+{
+  "name": "whatsapp-cli",
+  "version": "1.0.0",
+  "description": "A two-process WhatsApp CLI: long-lived daemon + thin CLI frontend.",
+  "main": "src/cli/index.js",
+  "bin": {
+    "wa": "bin/wa.js"
+  },
+  "scripts": {
+    "wa": "node bin/wa.js",
+    "daemon": "node src/daemon/index.js",
+    "test": "node --test test/unit/*.test.js",
+    "test:unit": "node --test test/unit/*.test.js",
+    "fetch-web-build": "node scripts/fetch-web-build.js",
+    "postinstall": "node scripts/wwebjs-patch.js",
+    "patch": "node scripts/wwebjs-patch.js",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "whatsapp",
+    "cli",
+    "daemon"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "picocolors": "^1.1.1",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "1.34.7"
+  }
+}
