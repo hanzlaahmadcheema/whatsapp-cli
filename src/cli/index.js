@@ -17,6 +17,7 @@ ${pc.cyan("receive")}               Stream incoming messages (Ctrl-C to stop)
   ${pc.cyan("logout")}               Force logout / unlink the device
   ${pc.cyan("daemon")}               Show daemon state
   ${pc.cyan("tui")}                  Launch interactive TUI
+  ${pc.cyan("mcp")}                  Start MCP (Model Context Protocol) stdio server
 
 ${pc.dim("Options:")}
   ${pc.dim("--help / -h")}           Show this help

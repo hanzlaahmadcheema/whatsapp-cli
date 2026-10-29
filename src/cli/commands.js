@@ -274,6 +274,11 @@ async function cmdTui() {
   await runTui();
 }
 
+async function cmdMcp() {
+  const { startMcpServer } = require("../mcp");
+  await startMcpServer();
+}
+
 const handlers = {
   login: cmdLogin,
   status: cmdStatus,
@@ -285,6 +290,7 @@ const handlers = {
   logout: cmdLogout,
   daemon: cmdDaemon,
   tui: cmdTui,
+  mcp: cmdMcp,
 };
 
 module.exports = handlers;

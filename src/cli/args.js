@@ -11,6 +11,7 @@ const COMMANDS = new Set([
   "logout",
   "daemon",
   "tui",
+  "mcp",
 ]);
 
 function parseArgs(argv) {
