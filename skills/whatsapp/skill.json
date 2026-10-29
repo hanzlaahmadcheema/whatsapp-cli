@@ -1,0 +1,45 @@
+{
+  "name": "whatsapp",
+  "version": "1.0.0",
+  "description": "WhatsApp CLI MCP integration skill for AI coding assistants and autonomous agents to monitor chats, retrieve history, and send text and media.",
+  "author": "WhatsApp CLI Contributors",
+  "homepage": "https://github.com/hanzlaahmad/whatsapp-cli",
+  "license": "ISC",
+  "mcp": {
+    "serverName": "whatsapp",
+    "transport": "stdio",
+    "command": "wa",
+    "args": ["mcp"],
+    "alternativeCommand": {
+      "command": "node",
+      "args": ["src/mcp/index.js"]
+    }
+  },
+  "tools": [
+    "whatsapp_get_status",
+    "whatsapp_list_chats",
+    "whatsapp_list_contacts",
+    "whatsapp_get_chat_history",
+    "whatsapp_send_message",
+    "whatsapp_mark_seen",
+    "whatsapp_get_recent_messages",
+    "whatsapp_send_image",
+    "whatsapp_send_document"
+  ],
+  "limits": {
+    "maxImageSizeBytes": 16777216,
+    "maxDocumentSizeBytes": 104857600,
+    "maxMessageLengthChars": 65000,
+    "supportedImageFormats": [
+      "jpeg",
+      "jpg",
+      "png",
+      "webp",
+      "gif",
+      "bmp",
+      "svg",
+      "tiff",
+      "ico"
+    ]
+  }
+}

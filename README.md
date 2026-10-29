@@ -77,26 +77,64 @@ wa logout     # unlink the device
 - File size limits: 16 MB for photos/images, 100 MB for documents.
 - Personal use only — avoid automated bulk sends (rate limits).
 
-## Model Context Protocol (MCP) Server
+## Model Context Protocol (MCP) Server & Reusable Agent Skill
 
-`wa` includes a built-in MCP stdio server compatible with Antigravity, OpenBot, Cursor, and Claude Desktop:
+`wa` includes a built-in MCP stdio server compatible with Antigravity, OpenBot, Cursor, and Claude Desktop, along with a portable agent skill package in [`skills/whatsapp/`](./skills/whatsapp/):
 
 ```sh
 wa mcp
 # or: node src/mcp/index.js
 ```
 
+### Reusable Agent Skill (`skills/whatsapp/`)
+
+The repository provides a complete, portable agent skill structured with:
+- [`skills/whatsapp/SKILL.md`](./skills/whatsapp/SKILL.md): Comprehensive instructions, discovery rules, recipient formats, validation constraints, and workflows.
+- [`skills/whatsapp/skill.json`](./skills/whatsapp/skill.json): Standard skill manifest with metadata, server command schemas, and limits.
+- [`skills/whatsapp/references/mcp-tools.md`](./skills/whatsapp/references/mcp-tools.md): Full JSON schemas, input constraints, and return structures for all 9 tools.
+- [`skills/whatsapp/examples/tool-usage.md`](./skills/whatsapp/examples/tool-usage.md): End-to-end agent workflow examples and MCP client configurations.
+
+#### Adding the Skill to Compatible Agents
+
+- **Antigravity / Project Workspace:**
+  Link or copy the skill into your workspace's `.agents/skills/` directory:
+  ```sh
+  mkdir -p .agents/skills
+  ln -sfn /path/to/whatsapp-cli/skills/whatsapp .agents/skills/whatsapp
+  ```
+  Or install globally:
+  ```sh
+  cp -r skills/whatsapp ~/.gemini/antigravity-cli/skills/
+  ```
+- **Claude Desktop / OpenBot / Cursor:**
+  Add the server definition below to your configuration file (`claude_desktop_config.json`, `~/.gemini/antigravity-cli/mcp_config.json`, or `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "wa",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
 ### Available MCP Tools
 
-- `whatsapp_get_status`: Inspect daemon state and account details.
-- `whatsapp_list_chats`: List recent chats with unread counts and snippets.
-- `whatsapp_list_contacts`: Search contacts by name query.
-- `whatsapp_get_chat_history`: Fetch message history for a contact or group.
-- `whatsapp_send_message`: Send a text message to a contact, group, or 'me'.
-- `whatsapp_send_image`: Send photos (JPEG, PNG, WebP, GIF, BMP, SVG) with optional caption.
-- `whatsapp_send_document`: Send files/documents (PDF, TXT, DOCX, etc.) with original filenames.
-- `whatsapp_mark_seen`: Mark a chat as read.
-- `whatsapp_get_recent_messages`: Retrieve incoming messages from the in-memory ring buffer.
+All 9 tools communicate locally with the background daemon over authenticated loopback HTTP:
+
+1. `whatsapp_get_status`: Inspect daemon state (`ready`, `linking`, `recovering`) and account details.
+2. `whatsapp_list_chats`: List recent chats with unread counts and snippets (limit: 1–200).
+3. `whatsapp_list_contacts`: Search contacts by name query.
+4. `whatsapp_get_chat_history`: Fetch message history for a contact, group JID, or `'me'` (limit: 1–200).
+5. `whatsapp_send_message`: Send a text message to a contact, group, or `'me'` (up to 65k chars).
+6. `whatsapp_send_image`: Send photos (JPEG, PNG, WebP, GIF, BMP, SVG, TIFF, ICO) up to 16 MB with optional caption.
+7. `whatsapp_send_document`: Send files/documents (PDF, TXT, DOCX, etc.) up to 100 MB with original filenames.
+8. `whatsapp_mark_seen`: Mark a chat as read.
+9. `whatsapp_get_recent_messages`: Retrieve incoming messages from the in-memory ring buffer.
+
+See [`skills/whatsapp/SKILL.md`](./skills/whatsapp/SKILL.md) for full instructions and troubleshooting.
 
 ## The whatsapp-web.js v1.34.7 patch
 
