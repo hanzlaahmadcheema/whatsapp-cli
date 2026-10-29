@@ -198,3 +198,55 @@ test("parseArgs recognizes send-image and send-file commands", () => {
   assert.equal(r2.flags.name, "annual.pdf");
   assert.deepEqual(r2.positional, ["15551234567", "./report.pdf"]);
 });
+
+test("WhatsAppService sendMedia passes media and options with adequate timeout to client.sendMessage", async () => {
+  const { WhatsAppService } = require("../../src/daemon/service");
+  const { setClientFactory } = require("../../src/whatsapp/client");
+  const { EventEmitter } = require("events");
+
+  let sentArgs = null;
+  const mockClient = new EventEmitter();
+  mockClient.initialize = async () => {};
+  mockClient.sendMessage = async (to, media, options) => {
+    sentArgs = { to, media, options };
+    return { id: { _serialized: "media_msg_test_123" } };
+  };
+  mockClient.getChats = async () => [];
+  setClientFactory(() => mockClient);
+
+  const service = new WhatsAppService({});
+  await service.start();
+  service.state = "ready";
+  const result = await service.sendMedia({
+    to: "15551234567@c.us",
+    media: { data: "aGVsbG8=", mimetype: "image/png", filename: "pic.png" },
+    options: { caption: "Test photo caption" },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.messageId, "media_msg_test_123");
+  assert.equal(sentArgs.to, "15551234567@c.us");
+  assert.equal(sentArgs.options.caption, "Test photo caption");
+  service.stop();
+});
+
+test("wwebjs-patch ensures mediaOptions drops __x_id and message preserves newMsgKey id", () => {
+  const utilsPath = path.join(
+    __dirname,
+    "../../node_modules/whatsapp-web.js/src/util/Injected/Utils.js"
+  );
+  if (!fs.existsSync(utilsPath)) return;
+  const src = fs.readFileSync(utilsPath, "utf8");
+  assert.ok(
+    src.includes("delete mediaOptions.__x_id"),
+    "Utils.js must drop __x_id from mediaOptions"
+  );
+  assert.ok(
+    src.includes("delete message.__x_id"),
+    "Utils.js must drop __x_id from message"
+  );
+  assert.ok(
+    src.includes("message.id = newMsgKey"),
+    "Utils.js must preserve message.id = newMsgKey"
+  );
+});

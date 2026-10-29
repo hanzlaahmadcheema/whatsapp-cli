@@ -153,9 +153,9 @@ class WhatsAppService extends EventEmitter {
     return this.recoverPromise;
   }
 
-  async withClient(action, fn) {
+  async withClient(action, fn, timeoutMs = 25000) {
     try {
-      return await withTimeout(fn(), 25000);
+      return await withTimeout(fn(), timeoutMs);
     } catch (err) {
       if (this.isFrameError(err)) {
         await this.recoverFromFrameFailure(action);
@@ -174,7 +174,7 @@ class WhatsAppService extends EventEmitter {
       return fail("NO_CLIENT", "Daemon has no active client (" + this.state + ").");
     }
     try {
-      const msg = await this.withClient("send", () => client.sendMessage(to, body));
+      const msg = await this.withClient("send", () => client.sendMessage(to, body), ttl);
       if (!msg) return fail("NOT_READY", "WhatsApp page reloaded — reconnecting. Run `wa status` to monitor.");
       return ok({ to, body, messageId: msg.id._serialized, timestamp: Date.now() });
     } catch (err) {
@@ -189,7 +189,7 @@ class WhatsAppService extends EventEmitter {
       return fail("NO_CLIENT", "Daemon has no active client (" + this.state + ").");
     }
     try {
-      const msg = await this.withClient("sendMedia", () => client.sendMessage(to, media, options));
+      const msg = await this.withClient("sendMedia", () => client.sendMessage(to, media, options), 60000);
       if (!msg) return fail("NOT_READY", "WhatsApp page reloaded — reconnecting. Run `wa status` to monitor.");
       const messageId = (msg.id && (msg.id._serialized || msg.id)) || "(unknown)";
       return ok({

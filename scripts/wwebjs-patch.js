@@ -109,6 +109,30 @@ const BLOCKS = [
             }`,
     marker: "model.groupMetadata = null;",
   },
+  {
+    // Drop __x_id and id from mediaOptions to prevent memoization crash
+    from: `            delete options.media;
+            delete options.sendMediaAsSticker;
+        }`,
+    to: `            delete options.media;
+            delete options.sendMediaAsSticker;
+            delete mediaOptions.__x_id;
+            delete mediaOptions.id;
+        }`,
+    marker: "delete mediaOptions.__x_id;",
+  },
+  {
+    // Drop __x_id from message and re-assert message.id = newMsgKey
+    from: `            ...botOptions,
+            ...extraOptions,
+        };`,
+    to: `            ...botOptions,
+            ...extraOptions,
+        };
+        delete message.__x_id;
+        message.id = newMsgKey;`,
+    marker: "delete message.__x_id;",
+  },
 ];
 
 function apply() {

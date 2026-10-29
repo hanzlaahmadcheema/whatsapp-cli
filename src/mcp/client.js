@@ -289,7 +289,7 @@ class WhatsAppMcpClient {
         isImage: true,
         sendMediaAsDocument: false,
       },
-      { timeout: 30000 }
+      { timeout: 60000 }
     );
 
     if (!res.ok) {
