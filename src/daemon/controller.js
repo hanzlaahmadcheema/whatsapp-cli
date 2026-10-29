@@ -1,11 +1,12 @@
 "use strict";
 
 const { EventEmitter } = require("events");
-const { execFile } = require("child_process");
+const { execFile, execFileSync } = require("child_process");
 const { WhatsAppClient } = require("../whatsapp/client");
 const { isClientUsable, withTimeout } = require("../whatsapp/probe");
 const { paths } = require("../config/paths");
 const { DEFAULTS } = require("../config");
+const { STATE } = require("../ipc/protocol");
 
 const INITIAL_BACKOFF_MS = 2000;
 const MAX_BACKOFF_MS = 30000;
@@ -20,16 +21,30 @@ class Controller extends EventEmitter {
     this.running = false;
     this._attempts = 0;
     this.reconnectTimer = null;
-    this._probeActive = false;
+    this._probePromise = null;
+    this.state = STATE.CONNECTING;
     this.net = {
       destroyTimeoutMs: opts.destroyTimeoutMs || DESTROY_TIMEOUT_MS,
       initTimeoutMs: opts.initTimeoutMs || INIT_TIMEOUT_MS,
       backoffBaseMs: opts.backoffBaseMs || INITIAL_BACKOFF_MS,
     };
 
-    this.client.on("state", (s) => this.emit("state", s));
-    this.client.on("authenticated", () => this.handleReadinessProbe());
-    this.client.on("disconnect", ({ isLogout }) => {
+    this._wireClient(this.client);
+  }
+
+  _wireClient(client) {
+    client.on("state", (s) => {
+      if (s === STATE.READY) {
+        // WhatsApp Web reported ready, but probe first to verify operability
+        // before advertising READY to the daemon and clients.
+        this.handleReadinessProbe();
+        return;
+      }
+      this.state = s;
+      this.emit("state", s);
+    });
+    client.on("authenticated", () => this.handleReadinessProbe());
+    client.on("disconnect", ({ isLogout }) => {
       if (isLogout) this.emit("logged_out");
       else this.scheduleReconnect();
     });
@@ -37,12 +52,7 @@ class Controller extends EventEmitter {
 
   setClientFactory(fn) {
     this.client = new WhatsAppClient(this.opts);
-    this.client.on("state", (s) => this.emit("state", s));
-    this.client.on("authenticated", () => this.handleReadinessProbe());
-    this.client.on("disconnect", ({ isLogout }) => {
-      if (isLogout) this.emit("logged_out");
-      else this.scheduleReconnect();
-    });
+    this._wireClient(this.client);
   }
 
   async start() {
@@ -59,18 +69,30 @@ class Controller extends EventEmitter {
   }
 
   async handleReadinessProbe() {
-    if (this._probeActive) return;
-    this._probeActive = true;
-    try {
-      const usable = await isClientUsable(this.client.client, {
-        attempts: 6,
-        delayMs: 1500,
-      });
-      this.emit("probe_done", { usable });
-      if (usable) this.emit("ready");
-    } finally {
-      this._probeActive = false;
-    }
+    if (this._probePromise) return this._probePromise;
+    this._probePromise = (async () => {
+      try {
+        const usable = await isClientUsable(this.client.client, {
+          attempts: 6,
+          delayMs: 1500,
+        });
+        this.emit("probe_done", { usable });
+        if (usable) {
+          this.state = STATE.READY;
+          this.emit("state", STATE.READY);
+          this.emit("ready");
+        } else {
+          if (this.state === STATE.READY) {
+            this.state = STATE.CONNECTING;
+            this.emit("state", STATE.CONNECTING);
+          }
+        }
+        return usable;
+      } finally {
+        this._probePromise = null;
+      }
+    })();
+    return this._probePromise;
   }
 
   scheduleReconnect() {
@@ -149,15 +171,13 @@ class Controller extends EventEmitter {
     if (typeof process.platform !== "string" || process.platform !== "linux") return;
     const profile = paths.authDir;
     if (!profile) return;
-    // Only touch processes whose command line references our auth dir.
-    execFile(
-      "pkill",
-      ["-9", "-f", profile],
-      { timeout: 3000 },
-      () => {
-        // exit code 1 = no match, which is the happy path.
-      }
-    );
+    // Synchronously terminate any orphaned Chrome processes bound to our profile
+    // before initializing so they cannot race with launching a fresh browser.
+    try {
+      execFileSync("pkill", ["-9", "-f", profile], { timeout: 3000, stdio: "ignore" });
+    } catch (_) {
+      // Exit code 1 means no matching processes found, which is the happy path.
+    }
   }
 
   async initializeClient() {
@@ -177,7 +197,7 @@ class Controller extends EventEmitter {
   }
 
   getState() {
-    return this.client.state;
+    return this.state || this.client.state;
   }
 
   get accountInfo() {

@@ -29,6 +29,19 @@ async function main() {
     return;
   }
 
+  const existing = daemonStore.read();
+  if (existing && existing.pid && existing.pid !== process.pid) {
+    let alive = false;
+    try {
+      process.kill(existing.pid, 0);
+      alive = true;
+    } catch (_) {}
+    if (alive) {
+      console.log(`wa daemon is already running on http://${existing.host || "127.0.0.1"}:${existing.port} (pid ${existing.pid})`);
+      return;
+    }
+  }
+
   const service = new WhatsAppService({});
   const server = new DaemonServer({ service, host: args.host, port: args.port });
 
@@ -53,6 +66,7 @@ async function main() {
   service.start();
 
   const shutdown = () => {
+    service.stop();
     server.stop();
     daemonStore.remove();
     process.exit(0);

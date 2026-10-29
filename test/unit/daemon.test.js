@@ -117,6 +117,7 @@ test("service broadcasts state and qr to subscribers", () => {
   const qrClient = service.controller.client;
   qrClient.emit("qr", "ABC123");
   assert.ok(seen.includes("qr"));
+  service.stop();
 });
 
 test("service detects detached-frame errors and triggers recovery", async () => {
@@ -128,6 +129,8 @@ test("service detects detached-frame errors and triggers recovery", async () => 
   const err = new Error("Attempted to use detached Frame '04CB7E...'");
   assert.equal(service.isFrameError(err), true);
   assert.equal(service.isFrameError(new Error("some other error")), false);
+  assert.equal(service.isFrameError(new Error("probe timeout")), false);
+  assert.equal(service.isFrameError(new Error("operation timeout")), false);
 
   // recovery kicks the state to CONNECTING and broadcasts a reason
   const states = [];

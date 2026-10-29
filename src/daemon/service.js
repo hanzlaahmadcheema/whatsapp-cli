@@ -51,6 +51,7 @@ class WhatsAppService extends EventEmitter {
       }
     });
     this.controller.on("ready", () => {
+      this.lastError = null;
       this.refreshAccountInfo();
     });
     this.controller.on("recovering", () => {
@@ -65,6 +66,7 @@ class WhatsAppService extends EventEmitter {
       this.broadcast({ event: "qr", qr });
     });
     client.on("ready", () => {
+      this.lastError = null;
       this.refreshAccountInfo();
     });
     client.on("auth_failure", (err) => {
@@ -114,7 +116,7 @@ class WhatsAppService extends EventEmitter {
   // surface a friendly reason instead of a raw "r: r".
   isFrameError(err) {
     const msg = String((err && err.message) || err);
-    return /detached\s+frame|already\s+disposed|execut.*?destroyed|target.*?closed|node\s+is\s+no\s+longer\s+attached|probe\s+timeout/i.test(
+    return /detached\s+frame|already\s+disposed|execut.*?destroyed|target.*?closed|node\s+is\s+no\s+longer\s+attached/i.test(
       msg,
     );
   }
@@ -309,6 +311,16 @@ class WhatsAppService extends EventEmitter {
       try {
         cb(event);
       } catch (_) {}
+    }
+  }
+
+  stop() {
+    if (this._heartbeatTimer) {
+      clearInterval(this._heartbeatTimer);
+      this._heartbeatTimer = null;
+    }
+    if (this.controller && typeof this.controller.stop === "function") {
+      this.controller.stop();
     }
   }
 }

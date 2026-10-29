@@ -63,11 +63,11 @@ const INSERTIONS = [
 `,
   },
   {
-    // Add the tolerant key resolver before getChats.
-    after: `    window.WWebJS.getChats = async () => {`,
-    text: `    window.WWebJS.getMsgKeyId = (key) =>
+    // Add the tolerant key resolver right after window.WWebJS = {};
+    after: `    window.WWebJS = {};`,
+    text: `
+    window.WWebJS.getMsgKeyId = (key) =>
         key?._serialized ?? key?.$1 ?? undefined;
-
 `,
   },
 ];
@@ -119,6 +119,12 @@ function apply() {
 
   let src = fs.readFileSync(FILE, "utf8");
   const applied = [];
+
+  const legacyInsideGetChats = /window\.WWebJS\.getChats = async \(\) => \{\s+window\.WWebJS\.getMsgKeyId = \(key\) =>\s+key\?\._serialized \?\? key\?\.\$1 \?\? undefined;\s+/g;
+  if (legacyInsideGetChats.test(src)) {
+    src = src.replace(legacyInsideGetChats, "window.WWebJS.getChats = async () => {\n");
+    applied.push("cleaned up legacy getMsgKeyId inside getChats");
+  }
 
   for (const [from, to] of REPLACEMENTS) {
     if (src.includes(from) && !src.includes(to)) {

@@ -115,3 +115,29 @@ test("Controller logged_out clears reconnect loop", async () => {
   await new Promise((r) => setTimeout(r, 5));
   ctrl.stop();
 });
+
+test("Controller delays ready state until probe confirms operability", async () => {
+  const mock = makeMockClient();
+  let probeAttempts = 0;
+  mock.getChats = async () => {
+    probeAttempts++;
+    if (probeAttempts < 2) throw new Error("not loaded yet");
+    return [{ id: "chat1@c.us" }];
+  };
+  installMockFactory(mock);
+
+  const ctrl = new Controller({});
+  let stateTransitions = [];
+  ctrl.on("state", (s) => stateTransitions.push(s));
+  await ctrl.start();
+
+  // Emitting raw client ready should trigger the probe and not mark ready prematurely
+  mock.emit("ready");
+  assert.notEqual(ctrl.getState(), "ready", "controller should not be ready immediately");
+
+  // Wait for probe to complete
+  await ctrl.handleReadinessProbe();
+  assert.equal(ctrl.getState(), "ready", "controller becomes ready after probe succeeds");
+  assert.ok(stateTransitions.includes("ready"), "ready state event was emitted");
+  ctrl.stop();
+});

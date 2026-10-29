@@ -81,12 +81,33 @@ async function ensureDaemon(opts = {}) {
   const d = readDaemonFile();
   if (d && d.host && d.port && d.token) {
     const base = `http://${d.host}:${d.port}`;
-    // Verify the daemon is actually alive before trusting the stale file.
-    // After a laptop sleep the process can die while daemon.json survives,
-    // which previously wedged every command at a dead port.
-    const h = await health(base, d.token, opts.healthTimeoutMs || DEFAULTS.healthTimeoutMs);
-    if (h.ok) return { base, token: d.token, started: false };
-    removeDaemonFile();
+    let pidAlive = false;
+    if (d.pid) {
+      try {
+        process.kill(d.pid, 0);
+        pidAlive = true;
+      } catch (_) {
+        pidAlive = false;
+      }
+    }
+    if (pidAlive) {
+      const h = await health(base, d.token, opts.healthTimeoutMs || 3000);
+      if (h.ok) return { base, token: d.token, started: false };
+      // Process is alive but first health check timed out. Give it another chance with a longer timeout
+      // in case Node is temporarily busy with heavy serialization.
+      const h2 = await health(base, d.token, 4000);
+      if (h2.ok) return { base, token: d.token, started: false };
+      // Daemon process is alive but unresponsive after multiple attempts.
+      // Terminate the unresponsive process before spawning a replacement to prevent duplicate daemons.
+      try {
+        process.kill(d.pid, "SIGTERM");
+        await sleep(1000);
+        try { process.kill(d.pid, "SIGKILL"); } catch (_) {}
+      } catch (_) {}
+      removeDaemonFile();
+    } else {
+      removeDaemonFile();
+    }
   }
   return spawnDaemon(opts);
 }
