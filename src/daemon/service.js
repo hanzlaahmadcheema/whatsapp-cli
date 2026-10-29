@@ -180,6 +180,28 @@ class WhatsAppService extends EventEmitter {
     }
   }
 
+  async sendMedia({ to, media, options = {} }) {
+    if (this.state !== STATE.READY) return fail("NOT_READY", "wa daemon is not ready yet. Wait for sync or run `wa status`.");
+    const client = this.client;
+    if (!client || typeof client.sendMessage !== "function") {
+      return fail("NO_CLIENT", "Daemon has no active client (" + this.state + ").");
+    }
+    try {
+      const msg = await this.withClient("sendMedia", () => client.sendMessage(to, media, options));
+      if (!msg) return fail("NOT_READY", "WhatsApp page reloaded — reconnecting. Run `wa status` to monitor.");
+      const messageId = (msg.id && (msg.id._serialized || msg.id)) || "(unknown)";
+      return ok({
+        to,
+        messageId,
+        timestamp: Date.now(),
+        filename: media && media.filename ? media.filename : null,
+        mimetype: media && media.mimetype ? media.mimetype : null,
+      });
+    } catch (err) {
+      return fail("SEND_MEDIA_FAILED", String(err && err.message ? err.message : err));
+    }
+  }
+
   async getChats({ limit = 50 } = {}) {
     if (this.state === STATE.READY && this.client?.getChats) {
       try {

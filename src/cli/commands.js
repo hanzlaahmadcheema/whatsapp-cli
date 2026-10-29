@@ -153,6 +153,128 @@ async function cmdSend(argv) {
   }
 }
 
+async function cmdSendImage(argv) {
+  const { base, token } = await getDaemon();
+  let target = argv.positional[0];
+  const filePath = argv.positional[1];
+  const caption = argv.flags.caption || argv.flags.c || argv.positional.slice(2).join(" ");
+
+  if (!target || !filePath) {
+    console.error("Usage: wa send-image <number|group|me> <filePath> [caption]");
+    process.exit(2);
+  }
+
+  const { validateFile } = require("../media");
+  let valid;
+  try {
+    valid = validateFile(filePath, { isImage: true });
+  } catch (err) {
+    console.error(`${EMOJI.fail} ${pc.red(err.message)}`);
+    process.exit(2);
+  }
+
+  let jid;
+  try {
+    if (target === "me" || target === "self") {
+      const status = await request(base, token, "GET", ROUTES.STATUS);
+      if (!status.ok || status.state !== "ready" || !status.account || !status.account.number) {
+        console.error(`${EMOJI.fail} ${pc.red("Cannot resolve self: daemon not ready or no account number.")}`);
+        process.exit(1);
+      }
+      target = status.account.number;
+    }
+    jid = toJid(target);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+
+  const isGroup = isGroupJid(jid);
+  const status = await request(base, token, "GET", ROUTES.STATUS);
+  if (status.ok && status.state !== "ready") {
+    console.error(`${EMOJI.fail} ${pc.red("Daemon is not ready.")} Run \`wa status\` to check.`);
+    process.exit(1);
+  }
+
+  console.log(`\n${EMOJI.arrow} ${pc.dim("Sending image to")} ${pc.bold(isGroup ? pc.yellow("group") : pc.cyan("contact"))} ${pc.bold(shortJid(jid))} (${pc.dim(valid.filename)})...\n`);
+  const res = await request(base, token, "POST", ROUTES.SEND_MEDIA, {
+    to: jid,
+    filePath: valid.resolvedPath,
+    caption: caption || undefined,
+    isImage: true,
+    sendMediaAsDocument: false,
+  });
+
+  if (res.ok) {
+    console.log(`${EMOJI.ok} ${pc.green("Sent.")} ${pc.dim("messageId:")} ${pc.cyan(res.messageId || "(unknown)")}`);
+  } else {
+    console.error(`${EMOJI.fail} ${pc.red("Failed:")} ${res.error && res.error.message}`);
+    process.exit(1);
+  }
+}
+
+async function cmdSendFile(argv) {
+  const { base, token } = await getDaemon();
+  let target = argv.positional[0];
+  const filePath = argv.positional[1];
+  const caption = argv.flags.caption || argv.flags.c || argv.positional.slice(2).join(" ");
+  const customName = argv.flags.name || argv.flags.filename;
+
+  if (!target || !filePath) {
+    console.error("Usage: wa send-file <number|group|me> <filePath> [caption] [--name <filename>]");
+    process.exit(2);
+  }
+
+  const { validateFile } = require("../media");
+  let valid;
+  try {
+    valid = validateFile(filePath, { isDocument: true, filename: customName });
+  } catch (err) {
+    console.error(`${EMOJI.fail} ${pc.red(err.message)}`);
+    process.exit(2);
+  }
+
+  let jid;
+  try {
+    if (target === "me" || target === "self") {
+      const status = await request(base, token, "GET", ROUTES.STATUS);
+      if (!status.ok || status.state !== "ready" || !status.account || !status.account.number) {
+        console.error(`${EMOJI.fail} ${pc.red("Cannot resolve self: daemon not ready or no account number.")}`);
+        process.exit(1);
+      }
+      target = status.account.number;
+    }
+    jid = toJid(target);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+
+  const isGroup = isGroupJid(jid);
+  const status = await request(base, token, "GET", ROUTES.STATUS);
+  if (status.ok && status.state !== "ready") {
+    console.error(`${EMOJI.fail} ${pc.red("Daemon is not ready.")} Run \`wa status\` to check.`);
+    process.exit(1);
+  }
+
+  console.log(`\n${EMOJI.arrow} ${pc.dim("Sending document to")} ${pc.bold(isGroup ? pc.yellow("group") : pc.cyan("contact"))} ${pc.bold(shortJid(jid))} (${pc.dim(valid.filename)})...\n`);
+  const res = await request(base, token, "POST", ROUTES.SEND_MEDIA, {
+    to: jid,
+    filePath: valid.resolvedPath,
+    filename: valid.filename,
+    caption: caption || undefined,
+    isImage: false,
+    sendMediaAsDocument: true,
+  });
+
+  if (res.ok) {
+    console.log(`${EMOJI.ok} ${pc.green("Sent.")} ${pc.dim("messageId:")} ${pc.cyan(res.messageId || "(unknown)")}`);
+  } else {
+    console.error(`${EMOJI.fail} ${pc.red("Failed:")} ${res.error && res.error.message}`);
+    process.exit(1);
+  }
+}
+
 async function cmdChats(argv) {
   const { base, token } = await getDaemon();
   const limit = argv.flags.limit || "50";
@@ -291,6 +413,14 @@ const handlers = {
   daemon: cmdDaemon,
   tui: cmdTui,
   mcp: cmdMcp,
+  "send-image": cmdSendImage,
+  sendimage: cmdSendImage,
+  image: cmdSendImage,
+  "send-file": cmdSendFile,
+  sendfile: cmdSendFile,
+  "send-doc": cmdSendFile,
+  document: cmdSendFile,
+  file: cmdSendFile,
 };
 
 module.exports = handlers;

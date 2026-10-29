@@ -62,15 +62,41 @@ wa logout     # unlink the device
 | `wa contacts [--name ...]` | Contacts, optionally filtered by name |
 | `wa history <contact> [--limit N]` | Message history |
 | `wa send <number\|group> <message>` | Send a message (spaced words join) |
+| `wa send-image <contact> <file> [caption]` | Send an image/photo with optional caption |
+| `wa send-file <contact> <file> [caption]` | Send a document/file with original filename |
 | `wa receive` | Stream incoming messages |
 | `wa logout` | Force logout / unlink the device |
 | `wa tui` | Full-screen interactive UI |
+| `wa mcp` | Launch MCP (Model Context Protocol) stdio server |
 
 ## FAQ / notes
 
 - `/send` POST accepts `{ "to": "<jid>", "message": "hi" }`.
+- `/send-media` POST accepts `{ "to": "<jid>", "filePath": "/path/to/file", "caption": "...", "sendMediaAsDocument": false }`.
 - Contacts groups accepted as `1234...@g.us` (no number validation).
+- File size limits: 16 MB for photos/images, 100 MB for documents.
 - Personal use only — avoid automated bulk sends (rate limits).
+
+## Model Context Protocol (MCP) Server
+
+`wa` includes a built-in MCP stdio server compatible with Antigravity, OpenBot, Cursor, and Claude Desktop:
+
+```sh
+wa mcp
+# or: node src/mcp/index.js
+```
+
+### Available MCP Tools
+
+- `whatsapp_get_status`: Inspect daemon state and account details.
+- `whatsapp_list_chats`: List recent chats with unread counts and snippets.
+- `whatsapp_list_contacts`: Search contacts by name query.
+- `whatsapp_get_chat_history`: Fetch message history for a contact or group.
+- `whatsapp_send_message`: Send a text message to a contact, group, or 'me'.
+- `whatsapp_send_image`: Send photos (JPEG, PNG, WebP, GIF, BMP, SVG) with optional caption.
+- `whatsapp_send_document`: Send files/documents (PDF, TXT, DOCX, etc.) with original filenames.
+- `whatsapp_mark_seen`: Mark a chat as read.
+- `whatsapp_get_recent_messages`: Retrieve incoming messages from the in-memory ring buffer.
 
 ## The whatsapp-web.js v1.34.7 patch
 

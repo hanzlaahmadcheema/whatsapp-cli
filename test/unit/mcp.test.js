@@ -3,6 +3,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 const { MessageRingBuffer } = require("../../src/mcp/ring-buffer");
 const { WhatsAppMcpClient } = require("../../src/mcp/client");
 const { createMcpServer } = require("../../src/mcp/server");
@@ -43,7 +46,7 @@ test("MessageRingBuffer filters by chatId and sinceTimestamp", () => {
   assert.equal(filteredTime[1].id, "2");
 });
 
-test("createMcpServer registers all 7 tools and handles success and errors", async () => {
+test("createMcpServer registers all 9 tools and handles success and errors", async () => {
   const mockClient = {
     getStatus: async () => ({
       ok: true,
@@ -71,6 +74,14 @@ test("createMcpServer registers all 7 tools and handles success and errors", asy
       return { ok: true, messageId: "m_out_1", to: target, timestamp: 123457 };
     },
     markSeen: async (target) => ({ ok: true, chatId: target }),
+    sendImage: async (target, filePath, caption) => {
+      if (target === "fail") throw new Error("Image delivery failed");
+      return { ok: true, messageId: "img_msg_1", to: target, filename: "photo.jpg", mimetype: "image/jpeg" };
+    },
+    sendDocument: async (target, filePath, { filename, caption } = {}) => {
+      if (target === "fail") throw new Error("Document delivery failed");
+      return { ok: true, messageId: "doc_msg_1", to: target, filename: filename || "doc.pdf", mimetype: "application/pdf" };
+    },
     getRecentMessages: (opts) => ({
       ok: true,
       count: 1,
@@ -88,6 +99,8 @@ test("createMcpServer registers all 7 tools and handles success and errors", asy
   assert.ok(tools["whatsapp_get_chat_history"]);
   assert.ok(tools["whatsapp_send_message"]);
   assert.ok(tools["whatsapp_mark_seen"]);
+  assert.ok(tools["whatsapp_send_image"]);
+  assert.ok(tools["whatsapp_send_document"]);
   assert.ok(tools["whatsapp_get_recent_messages"]);
 
   // Test status tool
@@ -109,6 +122,26 @@ test("createMcpServer registers all 7 tools and handles success and errors", asy
   const sendFailData = JSON.parse(sendFailRes.content[0].text);
   assert.equal(sendFailData.ok, false);
   assert.match(sendFailData.error.message, /Delivery failed/);
+
+  // Test send image tool
+  const imgRes = await tools["whatsapp_send_image"].handler({
+    target: "15551234567",
+    filePath: "/dummy/photo.jpg",
+    caption: "Sunset",
+  });
+  assert.equal(imgRes.isError, false);
+  const imgData = JSON.parse(imgRes.content[0].text);
+  assert.equal(imgData.messageId, "img_msg_1");
+
+  // Test send document tool
+  const docRes = await tools["whatsapp_send_document"].handler({
+    target: "15551234567",
+    filePath: "/dummy/doc.pdf",
+    filename: "invoice.pdf",
+  });
+  assert.equal(docRes.isError, false);
+  const docData = JSON.parse(docRes.content[0].text);
+  assert.equal(docData.filename, "invoice.pdf");
 
   // Test recent messages tool
   const recentRes = await tools["whatsapp_get_recent_messages"].handler({});
@@ -139,6 +172,16 @@ test("WhatsAppMcpClient validates targets and message bodies", async () => {
   await assert.rejects(
     async () => client.markSeen(""),
     /Recipient target is required/
+  );
+
+  await assert.rejects(
+    async () => client.sendImage("15551234567", ""),
+    /File path is required/
+  );
+
+  await assert.rejects(
+    async () => client.sendDocument("15551234567", ""),
+    /File path is required/
   );
 
   client.destroy();
@@ -213,6 +256,24 @@ test("WhatsAppMcpClient communicates with mock daemon HTTP server", async (t) =>
       return;
     }
 
+    if (req.url === "/send-media" && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const parsed = JSON.parse(body);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          ok: true,
+          messageId: "mock_media_msg_100",
+          to: parsed.to,
+          filename: parsed.filename || "file",
+          mimetype: parsed.mimetype || "application/octet-stream",
+          timestamp: Date.now(),
+        }));
+      });
+      return;
+    }
+
     if (req.url === "/receive") {
       res.writeHead(200, {
         "content-type": "text/event-stream",
@@ -270,6 +331,24 @@ test("WhatsAppMcpClient communicates with mock daemon HTTP server", async (t) =>
   // Test markSeen
   const seen = await client.markSeen("15559876543");
   assert.equal(seen.ok, true);
+
+  // Test sendImage & sendDocument over HTTP
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-media-test-"));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+
+  const testImg = path.join(tmpDir, "image.png");
+  fs.writeFileSync(testImg, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"));
+  const sentImg = await client.sendImage("15559876543", testImg, "Test caption");
+  assert.equal(sentImg.ok, true);
+  assert.equal(sentImg.messageId, "mock_media_msg_100");
+  assert.equal(sentImg.filename, "image.png");
+
+  const testDoc = path.join(tmpDir, "document.pdf");
+  fs.writeFileSync(testDoc, "%PDF-1.4 test document content");
+  const sentDoc = await client.sendDocument("15559876543", testDoc, { filename: "custom.pdf" });
+  assert.equal(sentDoc.ok, true);
+  assert.equal(sentDoc.messageId, "mock_media_msg_100");
+  assert.equal(sentDoc.filename, "custom.pdf");
 
   // Test SSE message reception in ring buffer
   assert.ok(sseClientRes, "SSE client connected");

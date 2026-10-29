@@ -255,6 +255,104 @@ class WhatsAppMcpClient {
     };
   }
 
+  async _resolveTargetJid(base, token, target) {
+    if (!target || typeof target !== "string" || !target.trim()) {
+      throw new Error("Recipient target is required.");
+    }
+    const cleanTarget = target.trim();
+    if (cleanTarget === "me" || cleanTarget === "self") {
+      const status = await request(base, token, "GET", ROUTES.STATUS, null, { timeout: 5000 });
+      if (!status.ok || status.state !== "ready" || !status.account || !status.account.number) {
+        throw new Error("Cannot resolve 'me': WhatsApp session is not ready or account number is unavailable.");
+      }
+      return toJid(status.account.number);
+    }
+    return toJid(cleanTarget);
+  }
+
+  async sendImage(target, filePath, caption = "") {
+    const { validateFile } = require("../media");
+    const valid = validateFile(filePath, { isImage: true });
+
+    const { base, token } = await this.getConnection();
+    const jid = await this._resolveTargetJid(base, token, target);
+
+    const res = await request(
+      base,
+      token,
+      "POST",
+      ROUTES.SEND_MEDIA,
+      {
+        to: jid,
+        filePath: valid.resolvedPath,
+        caption: caption ? String(caption).trim() : undefined,
+        isImage: true,
+        sendMediaAsDocument: false,
+      },
+      { timeout: 30000 }
+    );
+
+    if (!res.ok) {
+      const code = res.error && res.error.code;
+      const msg = res.error && res.error.message;
+      if (code === "NOT_READY") {
+        throw new Error("WhatsApp daemon is not ready yet. Please check status or scan QR code if unlinked.");
+      }
+      throw new Error(`Send image failed: ${this._sanitizeError(msg || code || "Unknown error")}`);
+    }
+
+    return {
+      ok: true,
+      messageId: res.messageId,
+      to: res.to,
+      filename: valid.filename,
+      mimetype: valid.mimetype,
+      timestamp: res.timestamp,
+    };
+  }
+
+  async sendDocument(target, filePath, { filename, caption } = {}) {
+    const { validateFile } = require("../media");
+    const valid = validateFile(filePath, { isDocument: true, filename });
+
+    const { base, token } = await this.getConnection();
+    const jid = await this._resolveTargetJid(base, token, target);
+
+    const res = await request(
+      base,
+      token,
+      "POST",
+      ROUTES.SEND_MEDIA,
+      {
+        to: jid,
+        filePath: valid.resolvedPath,
+        filename: valid.filename,
+        caption: caption ? String(caption).trim() : undefined,
+        isImage: false,
+        sendMediaAsDocument: true,
+      },
+      { timeout: 60000 }
+    );
+
+    if (!res.ok) {
+      const code = res.error && res.error.code;
+      const msg = res.error && res.error.message;
+      if (code === "NOT_READY") {
+        throw new Error("WhatsApp daemon is not ready yet. Please check status or scan QR code if unlinked.");
+      }
+      throw new Error(`Send document failed: ${this._sanitizeError(msg || code || "Unknown error")}`);
+    }
+
+    return {
+      ok: true,
+      messageId: res.messageId,
+      to: res.to,
+      filename: valid.filename,
+      mimetype: valid.mimetype,
+      timestamp: res.timestamp,
+    };
+  }
+
   async markSeen(target) {
     if (!target || typeof target !== "string" || !target.trim()) {
       throw new Error("Recipient target is required.");

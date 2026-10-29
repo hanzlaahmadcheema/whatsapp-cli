@@ -54,6 +54,9 @@ class DaemonServer {
     if (pathname === ROUTES.SEND && method === "POST") {
       return this.withBody(req, res, (body) => this.handleSend(res, body));
     }
+    if (pathname === ROUTES.SEND_MEDIA && method === "POST") {
+      return this.withBody(req, res, (body) => this.handleSendMedia(res, body));
+    }
     if (pathname === ROUTES.CHATS && method === "GET") {
       return this.handleChats(req, res);
     }
@@ -97,6 +100,36 @@ class DaemonServer {
     }
     const result = await this.service.send({ to, body: message });
     return this.json(res, result.ok ? 200 : 409, result);
+  }
+
+  async handleSendMedia(res, body) {
+    const { to, filePath, data, mimetype, filename, caption, sendMediaAsDocument, isImage } = body || {};
+    if (!to || (!filePath && !data)) {
+      return this.json(res, 400, fail("BAD_REQUEST", "`to` and either `filePath` or `data` are required"));
+    }
+    try {
+      const { loadMessageMedia } = require("../media");
+      const media = loadMessageMedia({
+        filePath,
+        data,
+        mimetype,
+        filename,
+        isImage: !!isImage,
+        isDocument: !!sendMediaAsDocument,
+      });
+
+      const result = await this.service.sendMedia({
+        to,
+        media,
+        options: {
+          caption: caption || undefined,
+          sendMediaAsDocument: !!sendMediaAsDocument,
+        },
+      });
+      return this.json(res, result.ok ? 200 : 409, result);
+    } catch (err) {
+      return this.json(res, 400, fail("INVALID_MEDIA", err && err.message ? err.message : String(err)));
+    }
   }
 
   async handleChats(req, res) {

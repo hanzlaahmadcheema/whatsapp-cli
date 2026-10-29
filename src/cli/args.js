@@ -12,6 +12,14 @@ const COMMANDS = new Set([
   "daemon",
   "tui",
   "mcp",
+  "send-image",
+  "sendimage",
+  "image",
+  "send-file",
+  "sendfile",
+  "send-doc",
+  "document",
+  "file",
 ]);
 
 function parseArgs(argv) {

@@ -230,6 +230,84 @@ function registerTools(server, client) {
       }
     }
   );
+
+  // 8. Send Image Tool
+  server.tool(
+    "whatsapp_send_image",
+    "Send an image/photo (JPEG, PNG, WebP, GIF, BMP, SVG) to a WhatsApp contact, group, or 'me', with an optional caption.",
+    {
+      target: z
+        .string()
+        .describe("Recipient phone number (e.g. '15551234567'), contact JID, group JID, or 'me'"),
+      filePath: z
+        .string()
+        .describe("Absolute or relative path to the image file on local filesystem"),
+      caption: z
+        .string()
+        .optional()
+        .describe("Optional caption to accompany the photo"),
+    },
+    async ({ target, filePath, caption }) => {
+      try {
+        const result = await client.sendImage(target, filePath, caption);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          isError: false,
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ ok: false, error: { message: err.message } }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // 9. Send Document Tool
+  server.tool(
+    "whatsapp_send_document",
+    "Send a document or file (PDF, TXT, DOCX, ZIP, etc.) with its original filename and MIME type to a WhatsApp contact, group, or 'me', with an optional caption.",
+    {
+      target: z
+        .string()
+        .describe("Recipient phone number (e.g. '15551234567'), contact JID, group JID, or 'me'"),
+      filePath: z
+        .string()
+        .describe("Absolute or relative path to the document file on local filesystem"),
+      filename: z
+        .string()
+        .optional()
+        .describe("Optional custom display filename for the recipient (defaults to original filename)"),
+      caption: z
+        .string()
+        .optional()
+        .describe("Optional caption to accompany the document"),
+    },
+    async ({ target, filePath, filename, caption }) => {
+      try {
+        const result = await client.sendDocument(target, filePath, { filename, caption });
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          isError: false,
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ ok: false, error: { message: err.message } }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
 }
 
 module.exports = { registerTools };

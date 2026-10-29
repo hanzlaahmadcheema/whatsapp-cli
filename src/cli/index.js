@@ -10,6 +10,8 @@ ${pc.bold("Commands:")}
   ${pc.cyan("login")}                Link this device / show QR for first-time setup
   ${pc.cyan("status")}               Show current daemon and session state
   ${pc.cyan("send")} <to> <message>  Send a message to a contact or group
+  ${pc.cyan("send-image")} <to> <file> [caption]  Send an image (photo) with optional caption
+  ${pc.cyan("send-file")} <to> <file> [caption]   Send a document or file with original name
   ${pc.cyan("chats")}                List recent chats
   ${pc.cyan("contacts")}             List contacts
   ${pc.cyan("history")} <to>         Show message history for a chat

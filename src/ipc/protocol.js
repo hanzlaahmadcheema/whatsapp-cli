@@ -12,6 +12,7 @@ const ROUTES = Object.freeze({
   LOGOUT: "/logout",
   CHAT_SEEN: "/chat/seen",
   CHAT_ARCHIVE: "/chat/archive",
+  SEND_MEDIA: "/send-media",
 });
 
 const STATE = Object.freeze({
