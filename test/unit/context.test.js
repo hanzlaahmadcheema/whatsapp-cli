@@ -252,3 +252,213 @@ test("messageSummary alias is identical to enrichMessageSummary", () => {
   const res2 = messageSummary(raw);
   assert.deepEqual(res1, res2);
 });
+
+test("SSE event pipeline: private incoming and outgoing message events receive enrichMessageSummary", async () => {
+  const { EventEmitter } = require("events");
+  const { setClientFactory } = require("../../src/whatsapp/client");
+  const { WhatsAppService } = require("../../src/daemon/service");
+  const { STATE } = require("../../src/ipc/protocol");
+
+  const mock = new EventEmitter();
+  mock.initialize = async () => {};
+  mock.getContacts = async () => [
+    {
+      id: { _serialized: "15551234567@c.us" },
+      name: "Alice Private",
+      pushname: "Alice",
+      number: "15551234567",
+    },
+  ];
+  mock.getChats = async () => [
+    { id: { _serialized: "15551234567@c.us" }, name: "Alice Private", isGroup: false },
+  ];
+  setClientFactory(() => mock);
+
+  const service = new WhatsAppService({});
+  await service.start();
+  service.state = STATE.READY;
+  await service.refreshContactsCache();
+
+  const receivedEvents = [];
+  const unsub = service.subscribe((event) => {
+    if (event.event === "message") receivedEvents.push(event);
+  });
+
+  const client = service.controller.client;
+
+  // 1. Incoming private message
+  client.emit("message_create", {
+    id: { _serialized: "in_priv_1", remote: "15551234567@c.us", fromMe: false },
+    fromMe: false,
+    from: "15551234567@c.us",
+    to: "me",
+    body: "Hello in private chat",
+    timestamp: 1730001000,
+  });
+
+  assert.equal(receivedEvents.length, 1);
+  const inEv = receivedEvents[0];
+  assert.equal(inEv.event, "message");
+  assert.equal(inEv.id, "in_priv_1");
+  assert.equal(inEv.fromMe, false);
+  assert.equal(inEv.from, "15551234567@c.us");
+  assert.equal(inEv.chatId, "15551234567@c.us");
+  assert.equal(inEv.chatName, "Alice Private");
+  assert.equal(inEv.senderName, "Alice Private");
+  assert.equal(inEv.isGroup, false);
+  assert.equal(inEv.hasQuotedMsg, false);
+  assert.equal(inEv.body, "Hello in private chat");
+
+  // 2. Outgoing private message
+  client.emit("message_create", {
+    id: { _serialized: "out_priv_1", remote: "15551234567@c.us", fromMe: true },
+    fromMe: true,
+    from: "me",
+    to: "15551234567@c.us",
+    body: "Replying to Alice",
+    timestamp: 1730001005,
+  });
+
+  assert.equal(receivedEvents.length, 2);
+  const outEv = receivedEvents[1];
+  assert.equal(outEv.id, "out_priv_1");
+  assert.equal(outEv.fromMe, true);
+  assert.equal(outEv.from, "me");
+  assert.equal(outEv.senderName, "You");
+  assert.equal(outEv.chatId, "15551234567@c.us");
+  assert.equal(outEv.isGroup, false);
+
+  unsub();
+  service.stop();
+});
+
+test("SSE event pipeline: group message events receive participant attribution and quoted context", async () => {
+  const { EventEmitter } = require("events");
+  const { setClientFactory } = require("../../src/whatsapp/client");
+  const { WhatsAppService } = require("../../src/daemon/service");
+  const { STATE } = require("../../src/ipc/protocol");
+
+  const mock = new EventEmitter();
+  mock.initialize = async () => {};
+  mock.getContacts = async () => [
+    { id: { _serialized: "15558889999@c.us" }, name: "Elena Rostova" },
+    { id: { _serialized: "15551112222@c.us" }, name: "John Connor" },
+  ];
+  mock.getChats = async () => [
+    { id: { _serialized: "120363001234567@g.us" }, name: "Mission Impossible Team", isGroup: true },
+  ];
+  setClientFactory(() => mock);
+
+  const service = new WhatsAppService({});
+  await service.start();
+  service.state = STATE.READY;
+  await service.refreshContactsCache();
+
+  const receivedEvents = [];
+  const unsub = service.subscribe((event) => {
+    if (event.event === "message") receivedEvents.push(event);
+  });
+
+  const client = service.controller.client;
+  client.emit("message_create", {
+    id: { _serialized: "grp_msg_1", remote: "120363001234567@g.us", fromMe: false },
+    fromMe: false,
+    from: "120363001234567@g.us",
+    to: "me",
+    author: "15558889999@c.us",
+    body: "Acknowledged the update",
+    timestamp: 1730002000,
+    hasQuotedMsg: true,
+    _data: {
+      quotedMsg: {
+        id: "orig_msg_0",
+        participant: "15551112222@c.us",
+        body: "Briefing is ready",
+        type: "chat",
+      },
+    },
+  });
+
+  assert.equal(receivedEvents.length, 1);
+  const grpEv = receivedEvents[0];
+  assert.equal(grpEv.event, "message");
+  assert.equal(grpEv.id, "grp_msg_1");
+  assert.equal(grpEv.isGroup, true);
+  assert.equal(grpEv.chatId, "120363001234567@g.us");
+  assert.equal(grpEv.chatName, "Mission Impossible Team");
+  assert.equal(grpEv.author, "15558889999@c.us");
+  assert.equal(grpEv.senderName, "Elena Rostova");
+  assert.equal(grpEv.hasQuotedMsg, true);
+  assert.ok(grpEv.quotedMsg);
+  assert.equal(grpEv.quotedMsg.senderName, "John Connor");
+  assert.equal(grpEv.quotedMsg.body, "Briefing is ready");
+
+  unsub();
+  service.stop();
+});
+
+test("Identity resolution is refreshed and accurate after daemon reconnects", async () => {
+  const { EventEmitter } = require("events");
+  const { setClientFactory } = require("../../src/whatsapp/client");
+  const { WhatsAppService } = require("../../src/daemon/service");
+  const { STATE } = require("../../src/ipc/protocol");
+
+  let contactsList = [];
+  const mock = new EventEmitter();
+  mock.initialize = async () => {};
+  mock.getContacts = async () => contactsList;
+  mock.getChats = async () => [];
+  setClientFactory(() => mock);
+
+  const service = new WhatsAppService({});
+  await service.start();
+  service.state = STATE.READY;
+
+  const messages = [];
+  service.subscribe((e) => {
+    if (e.event === "message") messages.push(e);
+  });
+
+  const client = service.controller.client;
+
+  // 1. Initial message before contact is synced
+  client.emit("message_create", {
+    id: { _serialized: "m_pre_sync" },
+    fromMe: false,
+    from: "15554443333@c.us",
+    to: "me",
+    body: "Before sync",
+    timestamp: 1730003000,
+  });
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].senderName, "15554443333");
+
+  // 2. Simulate daemon reconnect with newly synced contacts
+  contactsList = [
+    {
+      id: { _serialized: "15554443333@c.us" },
+      name: "Professor Charles Xavier",
+      number: "15554443333",
+    },
+  ];
+
+  // Trigger reconnect contact cache refresh
+  await service.refreshContactsCache();
+
+  // 3. Subsequent message from same contact
+  client.emit("message_create", {
+    id: { _serialized: "m_post_sync" },
+    fromMe: false,
+    from: "15554443333@c.us",
+    to: "me",
+    body: "After reconnect sync",
+    timestamp: 1730003010,
+  });
+
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].senderName, "Professor Charles Xavier");
+  assert.equal(messages[1].chatName, "Professor Charles Xavier");
+
+  service.stop();
+});

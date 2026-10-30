@@ -40,9 +40,12 @@ class WhatsAppService extends EventEmitter {
     this.controller.on("ready", () => {
       this.lastError = null;
       this.refreshAccountInfo();
+      this.refreshContactsCache().catch(() => {});
     });
     this.controller.on("recovery_success", ({ attempt }) => {
       this.lastError = null;
+      this.refreshAccountInfo();
+      this.refreshContactsCache().catch(() => {});
       this.broadcast({ event: "recovery_success", attempt });
     });
     this.controller.on("recovery_failed", ({ attempts, error }) => {
@@ -69,19 +72,42 @@ class WhatsAppService extends EventEmitter {
     client.on("ready", () => {
       this.lastError = null;
       this.refreshAccountInfo();
+      this.refreshContactsCache().catch(() => {});
     });
     client.on("auth_failure", (err) => {
       this.lastError = String((err && err.message) || err);
       this.broadcast({ event: "auth_failure", message: this.lastError });
     });
-    client.on("message", (msg) => {
+    const seenMsgIds = new Set();
+    const forwardMsg = (msg) => {
+      if (!msg) return;
+      const id = (msg.id && (msg.id._serialized || msg.id)) || null;
+      if (id) {
+        if (seenMsgIds.has(id)) return;
+        seenMsgIds.add(id);
+        if (seenMsgIds.size > 1000) {
+          const oldest = seenMsgIds.values().next().value;
+          seenMsgIds.delete(oldest);
+        }
+      }
+      if (this._contactCache && msg._data) {
+        const sender = msg.author || msg.from;
+        const notify = msg._data.notifyName || msg._data.pushname;
+        if (sender && notify && !this._contactCache.getContact(sender)) {
+          this._contactCache.setContact({ id: sender, name: notify });
+        }
+      }
+      const summary = enrichMessageSummary(msg, {
+        contactCache: this._contactCache,
+        myNumber: this.account?.number,
+      });
       this.broadcast({
         event: "message",
-        from: msg.from,
-        body: msg.body,
-        timestamp: msg.timestamp,
+        ...summary,
       });
-    });
+    };
+    client.on("message_create", forwardMsg);
+    client.on("message", forwardMsg);
   }
 
   async start() {
@@ -157,11 +183,20 @@ class WhatsAppService extends EventEmitter {
   }
 
   async refreshContactsCache() {
-    if (this.state === STATE.READY && this.client?.getContacts) {
+    if (!this._contactCache) this._contactCache = new ContactCache();
+    if (this.client && typeof this.client.getContacts === "function") {
       try {
         const contacts = await this.withClient("getContacts", () => this.client.getContacts(), 10000);
         if (contacts && this._contactCache) {
           this._contactCache.loadContacts(contacts);
+        }
+      } catch (_) {}
+    }
+    if (this.client && typeof this.client.getChats === "function") {
+      try {
+        const chats = await this.withClient("getChats", () => this.client.getChats(), 10000);
+        if (chats && this._contactCache) {
+          this._contactCache.loadChats(chats);
         }
       } catch (_) {}
     }
