@@ -137,8 +137,8 @@ const BLOCKS = [
 
 function apply() {
   if (!fs.existsSync(FILE)) {
-    console.warn("[wwebjs-patch] file not found:", FILE);
-    process.exit(1);
+    console.warn("[wwebjs-patch] target file not found (whatsapp-web.js not installed?):", FILE);
+    return;
   }
 
   let src = fs.readFileSync(FILE, "utf8");

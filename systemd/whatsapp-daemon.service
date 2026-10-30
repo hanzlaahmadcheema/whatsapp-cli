@@ -5,8 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/hanzlaahmad/PersonalProjects/whatsapp-cli
-ExecStart=/usr/bin/node /home/hanzlaahmad/PersonalProjects/whatsapp-cli/src/daemon/index.js --foreground
+# Note: When enabling via `wa autostart enable`, these paths are populated automatically.
+# If installing manually, set WorkingDirectory to your repository clone directory.
+WorkingDirectory=%h/whatsapp-cli
+ExecStart=/usr/bin/node src/daemon/index.js --foreground
 Restart=on-failure
 RestartSec=5s
 Environment=NODE_ENV=production

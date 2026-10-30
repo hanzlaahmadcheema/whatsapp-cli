@@ -108,3 +108,20 @@ test("reference documentation and examples exist and cover all tools", () => {
   assert.ok(exContent.includes("whatsapp_send_message"));
   assert.ok(exContent.includes("whatsapp_get_status"));
 });
+
+test("skills directory contains no hardcoded user or development machine paths", () => {
+  function scanDir(dir) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        scanDir(fullPath);
+      } else if (entry.isFile() && (entry.name.endsWith(".md") || entry.name.endsWith(".json"))) {
+        const text = fs.readFileSync(fullPath, "utf8");
+        assert.ok(!text.includes("/home/"), `File ${entry.name} should not contain hardcoded /home/ paths`);
+        assert.ok(!text.includes("/Users/"), `File ${entry.name} should not contain hardcoded /Users/ paths`);
+      }
+    }
+  }
+  scanDir(SKILL_DIR);
+});

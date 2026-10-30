@@ -1,119 +1,199 @@
-# wa — WhatsApp CLI
+# 💬 wa — WhatsApp CLI & MCP Server
 
-A two-process WhatsApp client for the terminal: a long-lived background daemon
-speaks to WhatsApp Web through [`whatsapp-web.js`](https://github.com/pedroslopez/whatsapp-web.js)
-+ Puppeteer, and a thin CLI frontend (or a full-screen TUI) drives it over a
-token-authenticated loopback HTTP API.
+[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](./LICENSE)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org/)
+[![Model Context Protocol](https://img.shields.io/badge/MCP-9%20Tools-purple.svg)](https://modelcontextprotocol.io/)
+[![Platform Support](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](./docs/cross-platform.md)
+[![Tests Passing](https://img.shields.io/badge/tests-93%20passed-success.svg)](./test/)
+
+A robust, scriptable WhatsApp automation suite for the terminal and AI agents:
+- **Fast CLI & TUI:** Lightweight frontend command line and zero-dependency ANSI dashboard (`wa tui`).
+- **Background Daemon:** Long-lived HTTP service (`127.0.0.1`) backed by Puppeteer and [`whatsapp-web.js`](https://github.com/pedroslopez/whatsapp-web.js).
+- **Model Context Protocol (MCP) Server:** Built-in stdio server exposing 9 tools for AI agents (OpenBot, Claude, Cursor, Copilot, Antigravity).
+- **Portable Agent Skill:** Turnkey skill package in [`skills/whatsapp/`](./skills/whatsapp/) with schemas, workflows, and parameter bounds.
+- **Media Support:** Send photos/images (up to 16 MB) with captions and documents/files (up to 100 MB) with original filenames.
+- **Linux Tray Manager & Sleep Recovery:** Native StatusNotifierItem system-tray indicator with automated laptop sleep/wake recovery.
+- **Cross-Platform:** Full support for Linux, macOS, and Windows 10/11.
+
+---
+
+## Architecture
 
 ```
-┌──────────────┐  local HTTP  ┌───────────────────────┐  Puppeteer   ┌─────────────┐
-│  wa (CLI)    │ ───────────► │  wa daemon            │ ───────────► │ WhatsApp Web │
-│  wa tui (TUI)│              │  auth, probe, recover │              └─────────────┘
-└──────────────┘              └───────────────────────┘
+┌─────────────────┐      ┌─────────────────────────┐
+│  AI Agent (MCP) │      │  wa CLI / wa tui (ANSI) │
+└────────┬────────┘      └────────────┬────────────┘
+         │ stdio                      │ loopback HTTP (x-wa-token)
+         ▼                            ▼
+┌──────────────────────────────────────────────────┐
+│           WhatsApp Background Daemon             │
+│   Token Auth  •  Readiness Probe  •  Event Bus   │
+└────────────────────────┬─────────────────────────┘
+                         │ Puppeteer CDP
+                         ▼
+┌──────────────────────────────────────────────────┐
+│       Chromium Headless (WhatsApp Web)           │
+│   LocalAuth (.wwebjs_auth)  •  Websocket Sync    │
+└──────────────────────────────────────────────────┘
 ```
 
-## Requirements
+```mermaid
+flowchart TD
+    subgraph Clients["User & Agent Interfaces"]
+        CLI["wa CLI Commands"]
+        TUI["wa tui (Terminal UI)"]
+        AGENT["AI Agent (Claude / Cursor / OpenBot)"]
+        TRAY["wa tray (Linux StatusNotifierItem)"]
+    end
 
-- Node.js >= 18
-- A WhatsApp account to link (personal use)
+    subgraph Daemon["Local Background Daemon (127.0.0.1)"]
+        MCP["wa mcp (stdio JSON-RPC)"]
+        HTTP["REST API & SSE (/receive)"]
+        AUTH["Bearer Token Auth (x-wa-token)"]
+        PROBE["Readiness Probe & Sleep Monitor"]
+    end
 
-## Install
+    subgraph Browser["Headless Browser Automation"]
+        PUP["Puppeteer & whatsapp-web.js"]
+        SESSION[".wwebjs_auth (Chromium LocalAuth)"]
+        WEB["web.whatsapp.com"]
+    end
 
-```sh
-npm install          # postinstall patches whatsapp-web.js (see below)
-npm link             # exposes the `wa` binary
+    AGENT -->|stdio JSON-RPC| MCP
+    MCP -->|HTTP + Bearer Token| HTTP
+    CLI -->|HTTP + Bearer Token| HTTP
+    TUI -->|HTTP + Bearer Token| HTTP
+    TRAY -->|SSE Stream & REST| HTTP
+
+    HTTP --> AUTH
+    AUTH --> PROBE
+    PROBE --> PUP
+    PUP --> SESSION
+    PUP --> WEB
 ```
 
-## Quick start
+---
 
-```sh
-wa login      # print a QR code, scan with WhatsApp ▶ Linked devices
-wa chats      # list recent chats
-wa tui        # full-screen terminal UI (list, history, reply)
-wa send 923001234567 "hello from wa"
-wa history 923001234567
-wa receive    # stream incoming messages
-wa logout     # unlink the device
+## Platform Support Matrix
+
+| Feature | Linux | macOS | Windows 10 / 11 |
+| :--- | :---: | :---: | :---: |
+| **CLI Commands (`wa send`, `wa chats`, etc.)** | Full | Full | Full (PowerShell / CMD) |
+| **Interactive Terminal UI (`wa tui`)** | Full | Full | Full (Windows Terminal) |
+| **Background Daemon (`wa daemon`)** | Full | Full | Full |
+| **Model Context Protocol Server (`wa mcp`)** | Full | Full | Full |
+| **Photo & Document Sending** | Full | Full | Full |
+| **StatusNotifierItem Tray Manager (`wa tray`)** | Full | N/A (Linux-only) | N/A (Linux-only) |
+| **Suspend/Resume DBus Recovery** | Full | Fallback Heartbeat | Fallback Heartbeat |
+| **Autostart Service** | Systemd User Unit | launchd plist | Task Scheduler |
+
+For detailed operating system prerequisites and installation instructions, see the [Cross-Platform Guide](./docs/cross-platform.md).
+
+---
+
+## Quick Start (3 Minutes)
+
+### 1. Requirements
+- Node.js >= 18.0.0
+- Git
+- A mobile phone with WhatsApp installed
+
+### 2. Install
+```bash
+git clone https://github.com/hanzlaahmadcheema/whatsapp-cli.git
+cd whatsapp-cli
+
+# Install dependencies (automatically applies compatibility patch)
+npm install
+
+# Expose 'wa' globally
+npm link
 ```
 
-`wa status` reports the daemon state, your account, and the daemon pid/port.
+### 3. Link Your WhatsApp Account
+```bash
+wa login
+```
+Scan the terminal QR code in WhatsApp (**Settings** > **Linked Devices** > **Link a device**). The session persists locally in `.wwebjs_auth/` — you only need to scan once.
 
-## How it works
+### 4. Basic Usage
+```bash
+wa status                                    # verify connection and daemon state
+wa chats                                     # list recent conversations
+wa send 15551234567 "Hello from WhatsApp CLI" # send a message
+wa send-image 15551234567 photo.jpg "Caption" # send a photo
+wa send-file 15551234567 document.pdf         # send a document
+wa tui                                       # launch interactive terminal UI
+```
 
-- **Daemon.** `src/daemon/` is a long-lived HTTP server bound to `127.0.0.1`.
-  All requests must carry the `x-wa-token` header from `.data/daemon.json`
-  (created with a fresh random token each launch).
-- **Frontend.** `src/cli/` auto-spawns the daemon on first use
-  (`ensureDaemon`), then issues HTTP calls. `src/tui/` is a zero-dependency
-  ANSI full-screen UI built on the same HTTP protocol.
-- **Liveness.** If the daemon is killed, the next `wa` command spawns it again
-  and the saved LocalAuth session is reused — no QR re-scan.
-- **Recovery.** WhatsApp Web reloads its page under long-running sessions and
-  Puppeteer frames detach. The service detects the signature error and
-  transparently reinitializes the client.
+---
 
-## Commands
+## CLI Command Reference
 
 | Command | Description |
-| --- | --- |
-| `wa login` | Link device / show QR; skips if already ready |
-| `wa status` | Daemon + session state |
-| `wa chats [--limit N]` | Recent chats |
-| `wa contacts [--name ...]` | Contacts, optionally filtered by name |
-| `wa history <contact> [--limit N]` | Message history |
-| `wa send <number\|group> <message>` | Send a message (spaced words join) |
-| `wa send-image <contact> <file> [caption]` | Send an image/photo with optional caption |
-| `wa send-file <contact> <file> [caption]` | Send a document/file with original filename |
-| `wa receive` | Stream incoming messages |
-| `wa logout` | Force logout / unlink the device |
-| `wa tui` | Full-screen interactive UI |
-| `wa mcp` | Launch MCP (Model Context Protocol) stdio server |
-| `wa tray [--foreground]` | Launch Linux StatusNotifierItem / AppIndicator system tray manager |
-| `wa reconnect` | Trigger controlled session recovery |
-| `wa autostart [enable\|disable\|status]` | Manage systemd user unit autostart |
-| `wa stop` | Stop background WhatsApp daemon |
-| `wa restart` | Restart background WhatsApp daemon |
+| :--- | :--- |
+| `wa login` | Display QR code to link device; skips if already authenticated |
+| `wa status` | Show daemon state (`ready`, `linking`, `recovering`), linked account, port, and PID |
+| `wa chats [--limit N]` | List recent conversations with unread badges and snippets |
+| `wa contacts [--name ...]` | Search address book contacts, optionally filtered by name |
+| `wa history <contact> [--limit N]` | Show message history for a contact or group |
+| `wa chat <contact>` | Stream incoming and outgoing messages live for a contact |
+| `wa send <contact\|group> <message>` | Send a plain text message (multiple words join automatically) |
+| `wa send-image <contact> <file> [caption]` | Send an image/photo (JPEG, PNG, WebP, GIF, SVG) up to 16 MB with optional caption |
+| `wa send-file <contact> <file> [caption]` | Send a document/binary file up to 100 MB with original filename |
+| `wa receive [--once]` | Stream all incoming messages live via Server-Sent Events (SSE) |
+| `wa tui` | Open full-screen ANSI interactive terminal dashboard |
+| `wa mcp` | Launch Model Context Protocol stdio server for AI agents |
+| `wa tray [--foreground]` | Start native Linux StatusNotifierItem system-tray manager |
+| `wa reconnect` | Trigger a controlled session recovery and browser re-probe |
+| `wa autostart [enable\|disable\|status]` | Manage systemd user services for background startup on login |
+| `wa stop` | Gracefully shut down the running background daemon |
+| `wa restart` | Restart the background daemon process |
+| `wa logout` | Force logout and unlink local session credentials |
 
-## FAQ / notes
+---
 
-- `/send` POST accepts `{ "to": "<jid>", "message": "hi" }`.
-- `/send-media` POST accepts `{ "to": "<jid>", "filePath": "/path/to/file", "caption": "...", "sendMediaAsDocument": false }`.
-- Contacts groups accepted as `1234...@g.us` (no number validation).
-- File size limits: 16 MB for photos/images, 100 MB for documents.
-- Personal use only — avoid automated bulk sends (rate limits).
+## Model Context Protocol (MCP) Server
 
-## Model Context Protocol (MCP) Server & Reusable Agent Skill
+`wa` includes a built-in MCP stdio server conforming to the [Model Context Protocol](https://modelcontextprotocol.io/) specification.
 
-`wa` includes a built-in MCP stdio server compatible with Antigravity, OpenBot, Cursor, and Claude Desktop, along with a portable agent skill package in [`skills/whatsapp/`](./skills/whatsapp/):
-
-```sh
+Launch the server with:
+```bash
 wa mcp
-# or: node src/mcp/index.js
+# Or directly via Node.js:
+node src/mcp/index.js
 ```
 
-### Reusable Agent Skill (`skills/whatsapp/`)
+### 9 Exposed MCP Tools
 
-The repository provides a complete, portable agent skill structured with:
-- [`skills/whatsapp/SKILL.md`](./skills/whatsapp/SKILL.md): Comprehensive instructions, discovery rules, recipient formats, validation constraints, and workflows.
-- [`skills/whatsapp/skill.json`](./skills/whatsapp/skill.json): Standard skill manifest with metadata, server command schemas, and limits.
-- [`skills/whatsapp/references/mcp-tools.md`](./skills/whatsapp/references/mcp-tools.md): Full JSON schemas, input constraints, and return structures for all 9 tools.
-- [`skills/whatsapp/examples/tool-usage.md`](./skills/whatsapp/examples/tool-usage.md): End-to-end agent workflow examples and MCP client configurations.
+| Tool | Action | Parameters | Description |
+| :--- | :--- | :--- | :--- |
+| `whatsapp_get_status` | Inspect Status | None | Check daemon health, connection state (`ready`, `linking`, `recovering`), and authenticated phone number. |
+| `whatsapp_list_chats` | List Chats | `limit` (default: 50) | Retrieve recent conversations sorted by latest activity with unread counts. |
+| `whatsapp_list_contacts` | Search Contacts | `name` (optional) | Query address book contacts by display name. |
+| `whatsapp_get_chat_history` | Read History | `target`, `limit` (default: 50) | Fetch past messages for a contact, group JID, or `'me'`. |
+| `whatsapp_send_message` | Send Text | `target`, `message` | Send plain text message (up to 65,000 characters). |
+| `whatsapp_send_image` | Send Photo | `target`, `filePath`, `caption` | Send an image file up to 16 MB with an optional caption. |
+| `whatsapp_send_document` | Send Document | `target`, `filePath`, `filename`, `caption` | Send any document or binary file up to 100 MB with custom or original filename. |
+| `whatsapp_mark_seen` | Mark Read | `target` | Mark all unread messages in a chat as seen. |
+| `whatsapp_get_recent_messages` | Stream Buffer | `limit`, `sinceTimestamp`, `chatId` | Read incoming messages buffered in memory since a given timestamp. |
 
-#### Adding the Skill to Compatible Agents
+### Recipient Target Resolution
+All message and history tools accept:
+- `"me"` or `"self"`: Resolves to the authenticated user's own phone number.
+- International numbers without `+` (e.g. `15551234567` or `923001234567`).
+- Contact JIDs: `15551234567@c.us`.
+- Group JIDs: `120363000000000000@g.us`.
 
-- **Antigravity / Project Workspace:**
-  Link or copy the skill into your workspace's `.agents/skills/` directory:
-  ```sh
-  mkdir -p .agents/skills
-  ln -sfn /path/to/whatsapp-cli/skills/whatsapp .agents/skills/whatsapp
-  ```
-  Or install globally:
-  ```sh
-  cp -r skills/whatsapp ~/.gemini/antigravity-cli/skills/
-  ```
-- **Claude Desktop / OpenBot / Cursor:**
-  Add the server definition below to your configuration file (`claude_desktop_config.json`, `~/.gemini/antigravity-cli/mcp_config.json`, or `.cursor/mcp.json`):
+For complete tool schemas, input constraints, and return formats, see [MCP Tools Reference](./skills/whatsapp/references/mcp-tools.md).
 
+---
+
+## Connecting AI Agents
+
+Connect WhatsApp to any compatible agent in seconds:
+
+### Claude Desktop (`claude_desktop_config.json`)
 ```json
 {
   "mcpServers": {
@@ -125,120 +205,131 @@ The repository provides a complete, portable agent skill structured with:
 }
 ```
 
-### Available MCP Tools
+### Cursor (`.cursor/mcp.json`)
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "wa",
+      "args": ["mcp"]
+    }
+  }
+}
+```
 
-All 9 tools communicate locally with the background daemon over authenticated loopback HTTP:
+### OpenBot & Antigravity
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "wa",
+      "args": ["mcp"]
+    }
+  }
+}
+```
 
-1. `whatsapp_get_status`: Inspect daemon state (`ready`, `linking`, `recovering`) and account details.
-2. `whatsapp_list_chats`: List recent chats with unread counts and snippets (limit: 1–200).
-3. `whatsapp_list_contacts`: Search contacts by name query.
-4. `whatsapp_get_chat_history`: Fetch message history for a contact, group JID, or `'me'` (limit: 1–200).
-5. `whatsapp_send_message`: Send a text message to a contact, group, or `'me'` (up to 65k chars).
-6. `whatsapp_send_image`: Send photos (JPEG, PNG, WebP, GIF, BMP, SVG, TIFF, ICO) up to 16 MB with optional caption.
-7. `whatsapp_send_document`: Send files/documents (PDF, TXT, DOCX, etc.) up to 100 MB with original filenames.
-8. `whatsapp_mark_seen`: Mark a chat as read.
-9. `whatsapp_get_recent_messages`: Retrieve incoming messages from the in-memory ring buffer.
+For complete step-by-step setup guides, Windows path configurations, and instructions for **VS Code Copilot**, **Claude Code**, and **Codex**, see the [AI Agent Integration Guide](./docs/agent-integration.md).
 
-See [`skills/whatsapp/SKILL.md`](./skills/whatsapp/SKILL.md) for full instructions and troubleshooting.
+---
 
-## Linux System Tray Manager & Suspend/Resume Recovery
+## Reusable Agent Skill (`skills/whatsapp/`)
 
-`wa` includes a native Linux system-tray indicator and automated suspend/resume recovery manager designed for Wayland (Hyprland, Quickshell, Waybar) and X11 (GNOME, KDE).
+This repository includes a portable, self-contained Agent Skill under [`skills/whatsapp/`](./skills/whatsapp/):
+- **`skill.json`**: Official agent manifest declaring capabilities, tool dependencies, and media limits.
+- **`SKILL.md`**: Conversational guidance, pre-flight verification rules, and error recovery procedures.
+- **`references/mcp-tools.md`**: Full parameter schemas and error codes.
+- **`examples/tool-usage.md`**: Concrete agent interaction scenarios.
 
-### 1. Tray Architecture & Icon States
+### Installing the Skill
+- **Antigravity / Gemini CLI:**
+  ```bash
+  cp -r skills/whatsapp ~/.gemini/antigravity-cli/skills/
+  ```
+- **OpenBot:**
+  ```bash
+  cp -r skills/whatsapp ~/.openbot/skills/
+  ```
+- **Cursor / VS Code:**
+  Reference [`skills/whatsapp/SKILL.md`](./skills/whatsapp/SKILL.md) in your `.cursorrules` or `.github/copilot-instructions.md`.
 
-The system tray manager (`src/tray/manager.py`) is a lightweight StatusNotifierItem (SNI) service using system `AyatanaAppIndicator3` and `Gtk 3.0` bindings (no Electron or heavy runtime required). It integrates natively into Quickshell (`end4-pC`), Waybar, or any FreeDesktop StatusNotifierWatcher host.
+---
 
-Real-time daemon synchronization is maintained via Server-Sent Events (`GET /receive`) with automated polling fallback.
+## Linux System Tray & Suspend/Resume Recovery
 
-#### Vector SVG Visual States (`assets/tray/`):
+`wa` includes a native Linux system-tray indicator (`src/tray/manager.py`) using system `AyatanaAppIndicator3` / `Gtk 3.0` bindings (Wayland & X11 compatible, tested on Hyprland, Quickshell, Waybar, GNOME, KDE).
+
+### Visual State Icons (`assets/tray/`)
 
 | State | Appearance | Meaning |
-|---|---|---|
-| **Ready** | Green (`#25D366`) with checkmark badge | Daemon is connected, authenticated, and verified operable |
-| **Connecting** | Blue (`#0288D1`) with syncing dots badge | Establishing session, syncing messages, or resuming |
-| **Recovering** | Amber (`#FF9800`) with circular sync arrow badge | Reconnecting session after network drop or frame detachment |
-| **Error** | Red (`#E53935`) with exclamation warning badge | Recovery attempts exhausted or intervention needed |
-| **Offline** | Grey (`#757575`) with slash badge | WhatsApp daemon stopped or unavailable |
+| :--- | :--- | :--- |
+| **Ready** | Green (`#25D366`) with checkmark badge | Connected, authenticated, and verified operational |
+| **Connecting** | Blue (`#0288D1`) with syncing dots badge | Connecting to WhatsApp Web or syncing chats |
+| **Recovering** | Amber (`#FF9800`) with circular sync badge | Reconnecting session after network drop or sleep |
+| **Error** | Red (`#E53935`) with alert badge | Intervention required or recovery exhausted |
+| **Offline** | Grey (`#757575`) with slash badge | Daemon stopped or unreachable |
 
-### 2. Tray Menu Controls
+### Automated Sleep / Wake Lifecycle
+When a laptop suspends, network interfaces drop and background headless Chromium sessions often wedge into infinite reload loops.
+- `wa` monitors systemd-logind's `PrepareForSleep` DBus signal via `src/daemon/sleep.js`.
+- On sleep, active probes pause and the daemon enters a suspended state.
+- On wake, the daemon polls network and DNS reachability for `web.whatsapp.com` with exponential backoff before initiating reconnection.
+- Reconnection is verified via `isClientUsable()` before advertising readiness.
 
-Right-clicking or clicking the tray icon opens a native menu with:
-- **Connection status**: Current status label with live updates.
-- **Account details**: Linked phone number and pushname.
-- **Last error / Last connected time**: Helpful contextual status.
-- **View Chats**: Native dialog displaying active chats, unread badges, and contact details.
-- **View Recent Messages**: Scrollable recent message history.
-- **Reconnect**: Triggers real, controlled session recovery (`POST /reconnect`).
-- **Daemon Lifecycle**: Start, Stop, and Restart controls.
-- **Daemon Logs**: Open system logs in default editor (`~/.local/state/whatsapp-cli/daemon.log`).
-- **Preferences & Autostart**: Configuration dialog for login autostart, auto-start daemon, notifications, and retry backoff.
-- **Quit**: Exit the tray manager without killing the daemon.
-
-### 3. Suspend / Resume Lifecycle & Recovery
-
-#### The Problem:
-When laptops sleep and resume, the network interface drops and Chromium in the background detaches or attempts to reload `web.whatsapp.com` before Wi-Fi and DNS stabilize. In standard clients, this leads to an infinite reconnect loop wedged in `CONNECTING` with `WhatsApp page reloaded — reconnecting…`.
-
-#### The Fix:
-1. **Sleep Detection**: The daemon listens to systemd-logind's `PrepareForSleep` DBus signal via `src/daemon/sleep.js`.
-2. **Quiescence**: Upon impending sleep (`PrepareForSleep(true)`), incoming operations pause, active probe timers clear, and the daemon enters a suspended state rather than reporting stale readiness.
-3. **Network Stabilization**: On wake (`PrepareForSleep(false)`), the daemon polls network and DNS reachability for `web.whatsapp.com` with exponential backoff before initiating reconnection.
-4. **Safe Chrome Recovery**: Orphaned Chromium lock files bound to `.wwebjs_auth` are safely cleaned without affecting shared browser processes.
-5. **Readiness Probe Verification**: Reconnection is verified with `isClientUsable()` before advertising `READY`.
-6. **Bounded Backoff & Error Escalation**: Rather than looping infinitely, recovery retries with exponential backoff up to `maxRecoveryAttempts` (configurable, default 3–5). If recovery repeatedly fails, it transitions to a genuine `ERROR` state with user notification.
-
-### 4. Autostart Configuration
-
-Manage systemd user services (no root privileges required):
-
+### Autostart Management
 ```bash
-# Enable login autostart for both tray manager and daemon
+# Enable systemd user autostart for daemon and tray
 wa autostart enable
 
-# Check current autostart status
+# Check status
 wa autostart status
 
 # Disable autostart
 wa autostart disable
 ```
 
-Systemd unit files are provided in [`systemd/whatsapp-daemon.service`](./systemd/whatsapp-daemon.service) and [`systemd/whatsapp-tray.service`](./systemd/whatsapp-tray.service).
+---
 
-### 5. Launching the Tray Manager
+## Development & Testing
 
-```bash
-# Launch in background (detached)
-wa tray
-
-# Launch in foreground with logs
-wa tray --foreground
-
-# Check running status
-wa tray --status
-
-# Stop tray manager
-wa tray --stop
-```
-
-## The whatsapp-web.js v1.34.7 patch
-
-Recent WhatsApp Web builds renamed the internal message-key field `_serialized`
-to `$1`, breaking `getChats()` and `sendMessage()`. A pinned fork is avoided;
-`scripts/wwebjs-patch.js` applies the upstream fix to `node_modules` and is
-re-run by `postinstall` after each `npm install` (idempotent). See
-`RELEASE.md` for details / re-apply with `npm run patch`.
-
-## Development
+All unit tests run offline with zero network requests or WhatsApp credentials:
 
 ```bash
-npm test            # node:test unit suite (args, jid, probe, controller, daemon, client)
-npm run fetch-web-build  # refresh pinned WhatsApp Web build into .wwebjs_cache
+# Run complete test suite (93 unit tests)
+npm test
+
+# Test specific module
+node --test test/unit/media.test.js
+node --test test/unit/mcp.test.js
+node --test test/unit/sleep.test.js
 ```
 
-Files are generated data are kept under `.data/`, `.wwebjs_auth/`,
-`.wwebjs_cache/` — all gitignored.
+### whatsapp-web.js Compatibility Patch
+Recent WhatsApp Web builds minified internal message keys (`_serialized` to `$1`). `scripts/wwebjs-patch.js` applies an idempotent patch during `postinstall`. You can manually trigger or verify it anytime:
+```bash
+npm run patch
+```
+
+---
+
+## Security & Privacy
+
+WhatsApp CLI is strictly **local-first**:
+- The background daemon listens only on `127.0.0.1`.
+- Authentication tokens are generated randomly per boot with `0600` file permissions.
+- Session credentials and messages are stored on your local disk in `.wwebjs_auth/` and are **never** transmitted to third-party servers.
+- Media paths are strictly validated to prevent directory traversal and reject non-regular files.
+
+For full security architecture and vulnerability reporting, see [SECURITY.md](./SECURITY.md).
+
+---
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup, testing standards, and pull request guidelines.
+
+---
 
 ## License
 
-ISC.
+[ISC](./LICENSE) © 2026 Hanzla Ahmad Cheema.

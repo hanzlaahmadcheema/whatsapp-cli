@@ -1,7 +1,7 @@
 {
   "name": "whatsapp-cli",
   "version": "1.0.0",
-  "description": "A two-process WhatsApp CLI: long-lived daemon + thin CLI frontend.",
+  "description": "Scriptable WhatsApp CLI, background daemon, 9-tool Model Context Protocol (MCP) server, and portable Agent Skill for AI assistants.",
   "main": "src/cli/index.js",
   "bin": {
     "wa": "bin/wa.js"
@@ -16,12 +16,26 @@
     "patch": "node scripts/wwebjs-patch.js",
     "prepublishOnly": "npm test"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hanzlaahmadcheema/whatsapp-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hanzlaahmadcheema/whatsapp-cli/issues"
+  },
+  "homepage": "https://github.com/hanzlaahmadcheema/whatsapp-cli#readme",
   "keywords": [
     "whatsapp",
     "cli",
-    "daemon"
+    "daemon",
+    "mcp",
+    "model-context-protocol",
+    "agent-skill",
+    "ai-agents",
+    "automation",
+    "puppeteer"
   ],
-  "author": "",
+  "author": "Hanzla Ahmad Cheema",
   "license": "ISC",
   "type": "commonjs",
   "engines": {

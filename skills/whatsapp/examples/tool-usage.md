@@ -25,7 +25,7 @@ The MCP server runs over standard I/O (`stdio`). You can launch it using the `wa
   "mcpServers": {
     "whatsapp": {
       "command": "node",
-      "args": ["/home/hanzlaahmad/PersonalProjects/whatsapp-cli/src/mcp/index.js"]
+      "args": ["<path-to-whatsapp-cli>/src/mcp/index.js"]
     }
   }
 }
@@ -169,7 +169,7 @@ Send an architecture diagram or photo (max 16 MB):
   "name": "whatsapp_send_image",
   "arguments": {
     "target": "923001234567",
-    "filePath": "/home/hanzlaahmad/PersonalProjects/whatsapp-cli/assets/architecture.png",
+    "filePath": "/path/to/diagram.png",
     "caption": "Updated system architecture diagram for review"
   }
 }

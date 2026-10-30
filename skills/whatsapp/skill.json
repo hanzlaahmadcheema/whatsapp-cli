@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "description": "WhatsApp CLI MCP integration skill for AI coding assistants and autonomous agents to monitor chats, retrieve history, and send text and media.",
   "author": "WhatsApp CLI Contributors",
-  "homepage": "https://github.com/hanzlaahmad/whatsapp-cli",
+  "homepage": "https://github.com/hanzlaahmadcheema/whatsapp-cli",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hanzlaahmadcheema/whatsapp-cli.git"
+  },
   "license": "ISC",
   "mcp": {
     "serverName": "whatsapp",
