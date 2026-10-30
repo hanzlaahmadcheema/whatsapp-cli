@@ -72,6 +72,9 @@ class DaemonServer {
     if (pathname === ROUTES.MEDIA_CLEAN && method === "POST") {
       return this.withBody(req, res, (body) => this.handleMediaClean(res, body));
     }
+    if (pathname === ROUTES.SEARCH && method === "GET") {
+      return this.handleSearch(req, res);
+    }
     if (pathname === ROUTES.CHATS && method === "GET") {
       return this.handleChats(req, res);
     }
@@ -204,6 +207,36 @@ class DaemonServer {
       customDir,
     });
     return this.json(res, result.ok ? 200 : 500, result);
+  }
+
+  async handleSearch(req, res) {
+    const qs = new URL(req.url, "http://x").searchParams;
+    const query = qs.get("query") || qs.get("q") || "";
+    const scope = qs.get("scope") || "all";
+    const chatId = qs.get("chatId") || qs.get("chat") || null;
+    const sender = qs.get("sender") || null;
+    const type = qs.get("type") || "all";
+    const since = qs.get("since") || null;
+    const until = qs.get("until") || null;
+    const limit = qs.get("limit") ? parseInt(qs.get("limit"), 10) : 20;
+    const offset = qs.get("offset") ? parseInt(qs.get("offset"), 10) : 0;
+
+    try {
+      const result = await this.service.search({
+        query,
+        scope,
+        chatId,
+        sender,
+        type,
+        since,
+        until,
+        limit,
+        offset,
+      });
+      return this.json(res, result.ok ? 200 : 400, result);
+    } catch (err) {
+      return this.json(res, 400, fail("SEARCH_ERROR", err.message));
+    }
   }
 
   async handleChats(req, res) {

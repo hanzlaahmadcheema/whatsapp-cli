@@ -603,6 +603,19 @@ class WhatsAppService extends EventEmitter {
     }
   }
 
+  async search(options = {}) {
+    const { searchWhatsApp } = require("../search");
+    try {
+      const result = await searchWhatsApp(options, {
+        service: this,
+        contactCache: this._contactCache,
+      });
+      return result;
+    } catch (err) {
+      return fail("SEARCH_FAILED", err.message || String(err));
+    }
+  }
+
   subscribe(cb) {
     this._subscribers.add(cb);
     return () => this._subscribers.delete(cb);

@@ -23,6 +23,7 @@ const COMMANDS = new Set([
   "media",
   "download-media",
   "download",
+  "search",
   "tray",
   "reconnect",
   "autostart",

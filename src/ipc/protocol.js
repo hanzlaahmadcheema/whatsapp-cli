@@ -18,6 +18,7 @@ const ROUTES = Object.freeze({
   RECENT_MEDIA: "/media/recent",
   MEDIA_STATS: "/media/stats",
   MEDIA_CLEAN: "/media/clean",
+  SEARCH: "/search",
   RECONNECT: "/reconnect",
   SUSPEND: "/suspend",
   RESUME: "/resume",

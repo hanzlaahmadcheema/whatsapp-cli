@@ -533,6 +533,31 @@ class WhatsAppMcpClient {
     };
   }
 
+  async search(options = {}) {
+    const { base, token } = await this.getConnection();
+    const queryParams = {};
+    if (options.query) queryParams.query = options.query;
+    if (options.scope) queryParams.scope = options.scope;
+    if (options.chatId) queryParams.chatId = options.chatId;
+    if (options.sender) queryParams.sender = options.sender;
+    if (options.type) queryParams.type = options.type;
+    if (options.since) queryParams.since = options.since;
+    if (options.until) queryParams.until = options.until;
+    if (options.limit !== undefined) queryParams.limit = options.limit;
+    if (options.offset !== undefined) queryParams.offset = options.offset;
+
+    const res = await request(base, token, "GET", ROUTES.SEARCH, null, {
+      query: queryParams,
+      timeout: 15000,
+    });
+
+    if (!res.ok) {
+      throw new Error(`Search failed: ${(res.error && res.error.message) || "Unknown error"}`);
+    }
+
+    return res;
+  }
+
   destroy() {
     this._destroyed = true;
     if (this._reconnectTimer) {

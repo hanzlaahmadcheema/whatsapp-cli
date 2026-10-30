@@ -426,6 +426,74 @@ function registerTools(server, client) {
       }
     }
   );
+
+  // 13. Unified Search Tool
+  server.tool(
+    "whatsapp_search",
+    "Unified search across messages, incoming media attachments, contacts, and chats with relevance ranking and natural-language date filtering.",
+    {
+      query: z
+        .string()
+        .optional()
+        .describe("Keywords or name to search across message text, filenames, captions, senders, and chat titles"),
+      scope: z
+        .enum(["all", "messages", "media", "contacts", "chats"])
+        .optional()
+        .describe("Search scope: 'all' (default), 'messages', 'media', 'contacts', or 'chats'"),
+      chatId: z
+        .string()
+        .optional()
+        .describe("Optional target chat phone number, contact JID, or group JID to constrain search"),
+      sender: z
+        .string()
+        .optional()
+        .describe("Optional sender name, contact phone number, or JID filter"),
+      type: z
+        .enum(["all", "chat", "text", "image", "document", "doc", "video", "audio"])
+        .optional()
+        .describe("Message or media type filter (default: 'all')"),
+      since: z
+        .string()
+        .optional()
+        .describe("Start date or natural-language expression ('yesterday', 'last Tuesday', '3 days ago', 'YYYY-MM-DD', or range 'date1..date2') in Asia/Karachi timezone"),
+      until: z
+        .string()
+        .optional()
+        .describe("End date or natural-language expression ('today', 'yesterday', 'YYYY-MM-DD')"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("Maximum number of results to return (default: 20, max: 100)"),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Pagination offset (default: 0)"),
+    },
+    async (params) => {
+      try {
+        const result = await client.search(params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          isError: false,
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ ok: false, error: { message: err.message } }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
 }
 
 module.exports = { registerTools };

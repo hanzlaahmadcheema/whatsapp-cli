@@ -662,6 +662,91 @@ async function cmdMediaClean(argv) {
   }
 }
 
+async function cmdSearch(argv) {
+  const query = argv.positional.join(" ") || argv.flags.query || argv.flags.q || "";
+  const scope = argv.flags.scope || "all";
+  const chat = argv.flags.chat || argv.flags.to || argv.flags.c || null;
+  const sender = argv.flags.sender || argv.flags.s || null;
+  const type = argv.flags.type || argv.flags.t || "all";
+  const since = argv.flags.since || null;
+  const until = argv.flags.until || null;
+  const limit = argv.flags.limit || argv.flags.n || argv.flags.l || "20";
+  const offset = argv.flags.offset || "0";
+
+  let searchRes = null;
+  try {
+    const { base, token } = await getDaemon();
+    const queryParams = {
+      query,
+      scope,
+      type,
+      limit,
+      offset,
+    };
+    if (chat) queryParams.chat = chat;
+    if (sender) queryParams.sender = sender;
+    if (since) queryParams.since = since;
+    if (until) queryParams.until = until;
+
+    searchRes = await request(base, token, "GET", ROUTES.SEARCH, null, {
+      query: queryParams,
+    });
+  } catch (_) {
+    // If daemon is not running or unreachable, fallback to direct search engine execution
+  }
+
+  if (!searchRes || !searchRes.ok) {
+    if (searchRes && searchRes.error && searchRes.error.code !== "NOT_FOUND") {
+      console.error(`${EMOJI.fail} ${pc.red(searchRes.error.message || "Search failed")}`);
+      process.exit(1);
+    }
+    // Direct engine fallback
+    const { searchWhatsApp } = require("../search");
+    try {
+      searchRes = await searchWhatsApp({
+        query,
+        scope,
+        chatId: chat,
+        sender,
+        type,
+        since,
+        until,
+        limit: parseInt(limit, 10) || 20,
+        offset: parseInt(offset, 10) || 0,
+      });
+    } catch (err) {
+      console.error(`${EMOJI.fail} ${pc.red(err.message || "Search failed")}`);
+      process.exit(1);
+    }
+  }
+
+  if (argv.flags.json) {
+    console.log(JSON.stringify(searchRes, null, 2));
+    return;
+  }
+
+  const results = searchRes.results || [];
+  if (results.length === 0) {
+    console.log(`${pc.dim("No matches found for query:")} "${pc.bold(query || "*")}"`);
+    return;
+  }
+
+  console.log(header(`search · "${query || "*"}" (${results.length} of ${searchRes.totalMatches || results.length} matches)`));
+
+  const rows = results.map((r) => {
+    const d = r.timestamp ? new Date(r.timestamp * 1000).toLocaleString() : pc.dim("—");
+    const scoreBadge = pc.yellow(`[${r.relevanceScore}]`);
+    const typeBadge = pc.magenta(`[${r.resultType}]`);
+    const who = pc.cyan(r.senderName || r.chatName || shortJid(r.senderId || r.chatId) || "?");
+    const snippet = r.filename
+      ? `${pc.bold("📎 " + r.filename)} ${r.caption ? pc.dim("(" + r.caption + ")") : ""}`
+      : pc.bold(r.content || "");
+    return [scoreBadge, typeBadge, pc.dim(d), who, snippet];
+  });
+
+  console.log(table(rows) + "\n");
+}
+
 async function cmdMedia(argv) {
   const sub = argv && argv.positional && argv.positional[0];
   if (sub === "stats") {
@@ -798,6 +883,8 @@ const handlers = {
   media: cmdMedia,
   "download-media": cmdDownloadMedia,
   download: cmdDownloadMedia,
+  search: cmdSearch,
+  find: cmdSearch,
   tray: cmdTray,
   reconnect: cmdReconnect,
   autostart: cmdAutostart,

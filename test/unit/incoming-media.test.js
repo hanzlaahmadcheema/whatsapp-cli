@@ -308,7 +308,7 @@ test("DaemonServer handles /media/info, /media/download, and /media/recent", asy
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-test("createMcpServer registers all 12 tools and handles incoming media tools", async () => {
+test("createMcpServer registers all 13 tools and handles incoming media tools", async () => {
   const mockClient = {
     getRecentMedia: async ({ chatId, type, limit }) => ({
       ok: true,
@@ -348,7 +348,8 @@ test("createMcpServer registers all 12 tools and handles incoming media tools", 
   const { server } = createMcpServer({ client: mockClient });
   const tools = server._registeredTools;
 
-  assert.equal(Object.keys(tools).length, 12);
+  assert.equal(Object.keys(tools).length, 13);
+  assert.ok(tools["whatsapp_search"]);
   assert.ok(tools["whatsapp_get_recent_media"]);
   assert.ok(tools["whatsapp_download_media"]);
   assert.ok(tools["whatsapp_get_media_info"]);

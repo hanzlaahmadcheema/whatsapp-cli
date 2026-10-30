@@ -88,6 +88,11 @@ test("createMcpServer registers all 9 tools and handles success and errors", asy
       bufferedTotal: 1,
       messages: [{ id: "m_recent", body: "Recent text", timestamp: 123458 }],
     }),
+    search: async (opts) => ({
+      ok: true,
+      query: opts.query,
+      results: [{ resultType: "message", id: "m_search_1", content: "Found query" }],
+    }),
   };
 
   const { server } = createMcpServer({ client: mockClient });
@@ -102,6 +107,7 @@ test("createMcpServer registers all 9 tools and handles success and errors", asy
   assert.ok(tools["whatsapp_send_image"]);
   assert.ok(tools["whatsapp_send_document"]);
   assert.ok(tools["whatsapp_get_recent_messages"]);
+  assert.ok(tools["whatsapp_search"]);
 
   // Test status tool
   const statusRes = await tools["whatsapp_get_status"].handler({});
@@ -149,6 +155,12 @@ test("createMcpServer registers all 9 tools and handles success and errors", asy
   const recentData = JSON.parse(recentRes.content[0].text);
   assert.equal(recentData.messages.length, 1);
   assert.equal(recentData.messages[0].id, "m_recent");
+
+  // Test search tool
+  const searchRes = await tools["whatsapp_search"].handler({ query: "Found" });
+  assert.equal(searchRes.isError, false);
+  const searchData = JSON.parse(searchRes.content[0].text);
+  assert.equal(searchData.results[0].id, "m_search_1");
 });
 
 test("WhatsAppMcpClient validates targets and message bodies", async () => {
