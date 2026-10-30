@@ -3,22 +3,11 @@
 const fs = require("fs");
 const path = require("path");
 const mime = require("mime-types");
-
-const MAX_IMAGE_SIZE_BYTES = 16 * 1024 * 1024; // 16 MB
-const MAX_DOCUMENT_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
-
-const EXT_TO_IMAGE_MIME = Object.freeze({
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".webp": "image/webp",
-  ".gif": "image/gif",
-  ".bmp": "image/bmp",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-  ".tif": "image/tiff",
-  ".tiff": "image/tiff",
-});
+const {
+  MAX_IMAGE_SIZE_BYTES,
+  MAX_DOCUMENT_SIZE_BYTES,
+  EXT_TO_IMAGE_MIME,
+} = require("./constants");
 
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -136,6 +125,8 @@ function loadMessageMedia(options = {}) {
   throw new Error("Either `filePath` or `data` (base64) must be provided.");
 }
 
+const store = require("./store");
+
 module.exports = {
   MAX_IMAGE_SIZE_BYTES,
   MAX_DOCUMENT_SIZE_BYTES,
@@ -143,4 +134,5 @@ module.exports = {
   formatBytes,
   validateFile,
   loadMessageMedia,
+  ...store,
 };

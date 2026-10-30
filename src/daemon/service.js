@@ -9,7 +9,7 @@ const stateStore = require("../store/state");
 
 function messageSummary(m) {
   return {
-    id: m.id && m.id._serialized,
+    id: m.id && (m.id._serialized || m.id),
     from: m.from,
     to: m.to,
     author: m.author || null,
@@ -19,6 +19,10 @@ function messageSummary(m) {
     hasMedia: !!m.hasMedia,
     type: m.type || null,
     isForwarded: !!m.isForwarded,
+    mimetype: m.mimetype || null,
+    filename: m.filename || null,
+    filesize: m.size || m.filesize || null,
+    caption: m.hasMedia ? (m.body || "") : "",
   };
 }
 
@@ -363,6 +367,168 @@ class WhatsAppService extends EventEmitter {
     } catch (err) {
       return fail("ARCHIVE_FAILED", String(err && err.message ? err.message : err));
     }
+  }
+
+  async getMediaInfo({ messageId }) {
+    if (!messageId) return fail("BAD_REQUEST", "`messageId` is required.");
+    if (this.state !== STATE.READY) return fail("NOT_READY", "WhatsApp daemon is not ready yet.");
+
+    const { findCachedMedia, extractMediaInfo } = require("../media/store");
+    const cached = findCachedMedia(messageId);
+    if (cached) {
+      return ok({
+        media: {
+          messageId,
+          chatId: cached.chatId || null,
+          from: cached.sender || null,
+          type: cached.mimetype && cached.mimetype.startsWith("image/") ? "image" : "document",
+          mimetype: cached.mimetype,
+          filename: cached.filename,
+          filesize: cached.size,
+          caption: cached.caption || "",
+          timestamp: cached.timestamp || null,
+          downloaded: true,
+          filePath: cached.filePath,
+        },
+      });
+    }
+
+    try {
+      const msg = await this.withClient("getMessageById", () => this.client.getMessageById(messageId));
+      if (!msg) {
+        return fail("NOT_FOUND", `Message with ID "${messageId}" was not found.`);
+      }
+      if (!msg.hasMedia) {
+        return fail("NO_MEDIA", `Message "${messageId}" does not contain media.`);
+      }
+      return ok({ media: extractMediaInfo(msg) });
+    } catch (err) {
+      return fail("MEDIA_INFO_FAILED", err.message || String(err));
+    }
+  }
+
+  async downloadMedia({ messageId, outputDir, filename }) {
+    if (!messageId) return fail("BAD_REQUEST", "`messageId` is required.");
+    if (this.state !== STATE.READY) return fail("NOT_READY", "WhatsApp daemon is not ready yet.");
+
+    const { findCachedMedia, saveIncomingMedia } = require("../media/store");
+    const existing = findCachedMedia(messageId, outputDir);
+    if (existing && (!filename || existing.filename === filename)) {
+      return ok({
+        messageId,
+        filePath: existing.filePath,
+        filename: existing.filename,
+        mimetype: existing.mimetype,
+        size: existing.size,
+        caption: existing.caption || "",
+        cached: true,
+      });
+    }
+
+    try {
+      const msg = await this.withClient("getMessageById", () => this.client.getMessageById(messageId));
+      if (!msg) {
+        return fail("NOT_FOUND", `Message with ID "${messageId}" was not found.`);
+      }
+      if (!msg.hasMedia) {
+        return fail("NO_MEDIA", `Message "${messageId}" does not contain media.`);
+      }
+
+      if (typeof msg.downloadMedia !== "function") {
+        return fail("NOT_SUPPORTED", "Client message does not support downloadMedia.");
+      }
+
+      const media = await this.withClient("downloadMedia", () => msg.downloadMedia(), 60000);
+      if (!media || !media.data) {
+        return fail("MEDIA_EXPIRED", "Media is expired, unavailable, or failed to download from WhatsApp.");
+      }
+
+      const saved = saveIncomingMedia(messageId, media, {
+        outputDir,
+        overrideFilename: filename,
+        caption: msg.body || "",
+        sender: msg.from,
+        timestamp: msg.timestamp,
+        chatId: (msg.id && msg.id.remote) || msg.from,
+      });
+
+      return ok(saved);
+    } catch (err) {
+      return fail("DOWNLOAD_FAILED", err.message || String(err));
+    }
+  }
+
+  async getRecentMedia({ chatId, type = "all", limit = 20, sinceTimestamp } = {}) {
+    if (this.state !== STATE.READY || !this.client) return [];
+
+    const { extractMediaInfo } = require("../media/store");
+    const targetLimit = Math.max(1, Math.min(limit || 20, 100));
+
+    const matchesType = (itemType, mimeType) => {
+      if (!type || type === "all") return true;
+      if (type === "image") {
+        return itemType === "image" || (mimeType && mimeType.startsWith("image/"));
+      }
+      if (type === "document") {
+        return itemType === "document" || (mimeType && !mimeType.startsWith("image/"));
+      }
+      return itemType === type;
+    };
+
+    const matchesTimestamp = (ts) => {
+      if (!sinceTimestamp) return true;
+      const t = ts > 1e11 ? Math.floor(ts / 1000) : ts;
+      const s = sinceTimestamp > 1e11 ? Math.floor(sinceTimestamp / 1000) : sinceTimestamp;
+      return t >= s;
+    };
+
+    const mediaList = [];
+    const seenIds = new Set();
+
+    if (chatId) {
+      try {
+        const { toJid } = require("../ipc/jid");
+        const resolvedJid = toJid(chatId);
+        const chat = await this.withClient("getChatById", () => this.client.getChatById(resolvedJid));
+        if (chat && typeof chat.fetchMessages === "function") {
+          const messages = await chat.fetchMessages({ limit: Math.max(50, targetLimit * 2) });
+          for (const m of messages) {
+            if (!m.hasMedia) continue;
+            const mid = m.id && (m.id._serialized || m.id);
+            if (!mid || seenIds.has(mid)) continue;
+            if (!matchesType(m.type, m.mimetype)) continue;
+            if (!matchesTimestamp(m.timestamp)) continue;
+            seenIds.add(mid);
+            mediaList.push(extractMediaInfo(m));
+          }
+        }
+      } catch (_) {}
+    } else {
+      try {
+        const chats = await this.withClient("getChats", () => this.client.getChats());
+        const recentChats = (chats || []).slice(0, 15);
+        for (const chat of recentChats) {
+          if (mediaList.length >= targetLimit * 2) break;
+          if (chat && typeof chat.fetchMessages === "function") {
+            try {
+              const msgs = await chat.fetchMessages({ limit: 25 });
+              for (const m of msgs) {
+                if (!m.hasMedia) continue;
+                const mid = m.id && (m.id._serialized || m.id);
+                if (!mid || seenIds.has(mid)) continue;
+                if (!matchesType(m.type, m.mimetype)) continue;
+                if (!matchesTimestamp(m.timestamp)) continue;
+                seenIds.add(mid);
+                mediaList.push(extractMediaInfo(m));
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    }
+
+    mediaList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    return mediaList.slice(0, targetLimit);
   }
 
   subscribe(cb) {

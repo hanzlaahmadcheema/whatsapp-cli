@@ -271,3 +271,124 @@ Send a PDF report or archive file (max 100 MB):
   "chatId": "923001234567@c.us"
 }
 ```
+
+---
+
+### Scenario G: Finding Latest Images Received on WhatsApp
+
+Agent request: *"Show me the latest images received on WhatsApp."*
+
+**Tool Call:**
+```json
+{
+  "name": "whatsapp_get_recent_media",
+  "arguments": {
+    "type": "image",
+    "limit": 5
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "count": 1,
+  "media": [
+    {
+      "messageId": "false_923001234567@c.us_3EB0IMG888",
+      "chatId": "923001234567@c.us",
+      "from": "923001234567@c.us",
+      "fromMe": false,
+      "author": null,
+      "timestamp": 1729000200,
+      "type": "image",
+      "mimetype": "image/jpeg",
+      "filename": "screenshot_dashboard.jpg",
+      "caption": "Here is the error screen from the test run",
+      "filesize": 182400,
+      "downloaded": false,
+      "filePath": null
+    }
+  ]
+}
+```
+
+---
+
+### Scenario H: Downloading an Incoming Document Attachment
+
+Agent request: *"Download the PDF contract someone sent me yesterday."*
+
+**Step 1: Locate the document in recent media or history**
+```json
+{
+  "name": "whatsapp_get_recent_media",
+  "arguments": {
+    "type": "document",
+    "limit": 10
+  }
+}
+```
+
+**Step 2: Download the attachment to local disk using its `messageId`**
+```json
+{
+  "name": "whatsapp_download_media",
+  "arguments": {
+    "messageId": "false_923001234567@c.us_3EB0DOC999"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "messageId": "false_923001234567@c.us_3EB0DOC999",
+  "filePath": "/path/to/whatsapp-cli/.data/media/false_923001234567_c_us_3EB0DOC999_Contract_Signed.pdf",
+  "filename": "Contract_Signed.pdf",
+  "mimetype": "application/pdf",
+  "size": 512400,
+  "caption": "Signed contract for your records",
+  "cached": false
+}
+```
+
+The agent now has the absolute `filePath` on disk and can read or parse the PDF.
+
+---
+
+### Scenario I: Inspecting Attachment Metadata Without Full Download
+
+Agent request: *"Check what file was sent in this message before downloading."*
+
+**Tool Call:**
+```json
+{
+  "name": "whatsapp_get_media_info",
+  "arguments": {
+    "messageId": "false_923001234567@c.us_3EB0DOC999"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "media": {
+    "messageId": "false_923001234567@c.us_3EB0DOC999",
+    "chatId": "923001234567@c.us",
+    "from": "923001234567@c.us",
+    "type": "document",
+    "mimetype": "application/pdf",
+    "filename": "Contract_Signed.pdf",
+    "filesize": 512400,
+    "caption": "Signed contract for your records",
+    "timestamp": 1729000150,
+    "downloaded": true,
+    "filePath": "/path/to/whatsapp-cli/.data/media/false_923001234567_c_us_3EB0DOC999_Contract_Signed.pdf"
+  }
+}
+```

@@ -272,6 +272,103 @@ Queries recent incoming WhatsApp messages cached in the daemon's in-memory ring 
 
 ---
 
+## 10. `whatsapp_get_recent_media`
+
+Retrieves recently received media attachments (images and documents) across conversations or filtered by a specific contact.
+
+### Input Schema
+| Field | Type | Required | Default | Constraints | Description |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `chatId` | string | No | `null` | Phone number or JID | Filter media by contact number, `@c.us` JID, or group `@g.us` JID |
+| `type` | string | No | `"all"` | `"all"`, `"image"`, `"document"` | Media type filter |
+| `limit` | integer | No | `20` | `1` to `100` | Maximum number of media items to return |
+| `sinceTimestamp` | number | No | `null` | Unix timestamp | Return media received after this timestamp in seconds |
+
+### Return Structure
+```json
+{
+  "ok": true,
+  "count": 2,
+  "media": [
+    {
+      "messageId": "false_15551234567@c.us_3EB0ABC123",
+      "chatId": "15551234567@c.us",
+      "from": "15551234567@c.us",
+      "fromMe": false,
+      "author": null,
+      "timestamp": 1729000100,
+      "type": "image",
+      "mimetype": "image/jpeg",
+      "filename": "photo.jpg",
+      "caption": "Latest whiteboard notes",
+      "filesize": 254100,
+      "downloaded": true,
+      "filePath": "/path/to/whatsapp-cli/.data/media/false_15551234567_c_us_3EB0ABC123_photo.jpg"
+    }
+  ]
+}
+```
+
+---
+
+## 11. `whatsapp_download_media`
+
+Downloads an incoming media attachment from WhatsApp using its unique message ID, saving it locally to disk.
+
+### Input Schema
+| Field | Type | Required | Default | Constraints | Description |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `messageId` | string | Yes | — | Min 5 chars | Serialized WhatsApp message ID containing media |
+| `outputDir` | string | No | `.data/media` | Valid directory path | Optional custom directory to save attachment into |
+| `filename` | string | No | Original name | Sanitized string | Optional custom filename override |
+
+### Return Structure
+```json
+{
+  "ok": true,
+  "messageId": "false_15551234567@c.us_3EB0ABC123",
+  "filePath": "/path/to/whatsapp-cli/.data/media/false_15551234567_c_us_3EB0ABC123_photo.jpg",
+  "filename": "photo.jpg",
+  "mimetype": "image/jpeg",
+  "size": 254100,
+  "caption": "Latest whiteboard notes",
+  "cached": false
+}
+```
+
+---
+
+## 12. `whatsapp_get_media_info`
+
+Retrieves attachment metadata for a WhatsApp message without downloading the full payload to disk.
+
+### Input Schema
+| Field | Type | Required | Default | Constraints | Description |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `messageId` | string | Yes | — | Min 5 chars | Serialized WhatsApp message ID to inspect |
+
+### Return Structure
+```json
+{
+  "ok": true,
+  "media": {
+    "messageId": "false_15551234567@c.us_3EB0DOC999",
+    "chatId": "15551234567@c.us",
+    "from": "15551234567@c.us",
+    "type": "document",
+    "mimetype": "application/pdf",
+    "filename": "Proposal_Final.pdf",
+    "filesize": 1048576,
+    "caption": "Attached proposal",
+    "timestamp": 1729000150,
+    "downloaded": false,
+    "filePath": null
+  }
+}
+```
+
+---
+
 ## Common Error Codes & Handling
 
 | Error Code / Message | Cause | Corrective Action |

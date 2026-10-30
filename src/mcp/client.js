@@ -93,6 +93,12 @@ class WhatsAppMcpClient {
                   author: data.author || null,
                   body: data.body || "",
                   timestamp: data.timestamp || Math.floor(Date.now() / 1000),
+                  hasMedia: Boolean(data.hasMedia),
+                  type: data.type || (data.hasMedia ? "media" : "chat"),
+                  mimetype: data.mimetype || null,
+                  filename: data.filename || null,
+                  filesize: data.size || data.filesize || null,
+                  caption: data.caption || (data.hasMedia ? data.body : ""),
                 });
               }
             } catch (_) {}
@@ -378,6 +384,152 @@ class WhatsAppMcpClient {
       bufferedTotal: this.ringBuffer.size,
       count: messages.length,
       messages,
+    };
+  }
+
+  async getRecentMedia({ chatId, type = "all", limit = 20, sinceTimestamp = null } = {}) {
+    const { base, token } = await this.getConnection();
+
+    let resolvedChatId = null;
+    if (chatId) {
+      if (chatId === "me" || chatId === "self") {
+        const status = await this.getStatus();
+        resolvedChatId = status.account && status.account.number ? toJid(status.account.number) : null;
+      } else {
+        resolvedChatId = toJid(chatId.trim());
+      }
+    }
+
+    const query = {
+      type: type || "all",
+      limit: Math.max(1, Math.min(limit || 20, 100)),
+    };
+    if (resolvedChatId) query.chatId = resolvedChatId;
+    if (sinceTimestamp) query.sinceTimestamp = sinceTimestamp;
+
+    const res = await request(base, token, "GET", ROUTES.RECENT_MEDIA, null, {
+      query,
+      timeout: 15000,
+    });
+
+    if (!res.ok) {
+      throw new Error(`Get recent media failed: ${(res.error && res.error.message) || "Unknown error"}`);
+    }
+
+    // Merge with any real-time media messages buffered in ringBuffer
+    const bufferedMedia = this.ringBuffer.getMedia({
+      type,
+      chatId: resolvedChatId,
+      sinceTimestamp,
+      limit: query.limit,
+    });
+
+    const seenIds = new Set();
+    const combined = [];
+
+    // Prioritize daemon history results
+    for (const item of (res.media || [])) {
+      const mid = item.messageId || item.id;
+      if (mid && !seenIds.has(mid)) {
+        seenIds.add(mid);
+        combined.push({
+          messageId: mid,
+          chatId: item.chatId,
+          from: item.from,
+          fromMe: item.fromMe,
+          author: item.author || null,
+          timestamp: item.timestamp,
+          type: item.type,
+          mimetype: item.mimetype,
+          filename: item.filename,
+          filesize: item.filesize || item.size || null,
+          caption: item.caption || "",
+          downloaded: Boolean(item.downloaded),
+          filePath: item.filePath || null,
+        });
+      }
+    }
+
+    // Include recent buffer items not already present
+    for (const b of bufferedMedia) {
+      const mid = b.id;
+      if (mid && !seenIds.has(mid)) {
+        seenIds.add(mid);
+        combined.push({
+          messageId: mid,
+          chatId: b.chatId,
+          from: b.from,
+          fromMe: b.fromMe,
+          author: b.author || null,
+          timestamp: b.timestamp,
+          type: b.type,
+          mimetype: b.mimetype,
+          filename: b.filename,
+          filesize: b.filesize || null,
+          caption: b.caption || b.body || "",
+          downloaded: false,
+          filePath: null,
+        });
+      }
+    }
+
+    combined.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    const finalMedia = combined.slice(0, query.limit);
+
+    return {
+      ok: true,
+      count: finalMedia.length,
+      media: finalMedia,
+    };
+  }
+
+  async downloadMedia(messageId, { outputDir, filename } = {}) {
+    if (!messageId || typeof messageId !== "string" || !messageId.trim()) {
+      throw new Error("Valid message ID is required to download media.");
+    }
+
+    const { base, token } = await this.getConnection();
+    const payload = {
+      messageId: messageId.trim(),
+    };
+    if (outputDir) payload.outputDir = outputDir;
+    if (filename) payload.filename = filename;
+
+    const res = await request(base, token, "POST", ROUTES.MEDIA_DOWNLOAD, payload, { timeout: 60000 });
+    if (!res.ok) {
+      throw new Error(`Download media failed: ${(res.error && res.error.message) || "Unknown error"}`);
+    }
+
+    return {
+      ok: true,
+      messageId: res.messageId,
+      filePath: res.filePath,
+      filename: res.filename,
+      mimetype: res.mimetype,
+      size: res.size,
+      caption: res.caption || "",
+      cached: Boolean(res.cached),
+    };
+  }
+
+  async getMediaInfo(messageId) {
+    if (!messageId || typeof messageId !== "string" || !messageId.trim()) {
+      throw new Error("Valid message ID is required to get media info.");
+    }
+
+    const { base, token } = await this.getConnection();
+    const res = await request(base, token, "GET", ROUTES.MEDIA_INFO, null, {
+      query: { messageId: messageId.trim() },
+      timeout: 10000,
+    });
+
+    if (!res.ok) {
+      throw new Error(`Get media info failed: ${(res.error && res.error.message) || "Unknown error"}`);
+    }
+
+    return {
+      ok: true,
+      media: res.media,
     };
   }
 

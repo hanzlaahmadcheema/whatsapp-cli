@@ -2,16 +2,16 @@
 
 [![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](./LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org/)
-[![Model Context Protocol](https://img.shields.io/badge/MCP-9%20Tools-purple.svg)](https://modelcontextprotocol.io/)
+[![Model Context Protocol](https://img.shields.io/badge/MCP-12%20Tools-purple.svg)](https://modelcontextprotocol.io/)
 [![Platform Support](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](./docs/cross-platform.md)
-[![Tests Passing](https://img.shields.io/badge/tests-93%20passed-success.svg)](./test/)
+[![Tests Passing](https://img.shields.io/badge/tests-103%20passed-success.svg)](./test/)
 
 A robust, scriptable WhatsApp automation suite for the terminal and AI agents:
 - **Fast CLI & TUI:** Lightweight frontend command line and zero-dependency ANSI dashboard (`wa tui`).
 - **Background Daemon:** Long-lived HTTP service (`127.0.0.1`) backed by Puppeteer and [`whatsapp-web.js`](https://github.com/pedroslopez/whatsapp-web.js).
-- **Model Context Protocol (MCP) Server:** Built-in stdio server exposing 9 tools for AI agents (OpenBot, Claude, Cursor, Copilot, Antigravity).
+- **Model Context Protocol (MCP) Server:** Built-in stdio server exposing 12 tools for AI agents (OpenBot, Claude, Cursor, Copilot, Antigravity).
 - **Portable Agent Skill:** Turnkey skill package in [`skills/whatsapp/`](./skills/whatsapp/) with schemas, workflows, and parameter bounds.
-- **Media Support:** Send photos/images (up to 16 MB) with captions and documents/files (up to 100 MB) with original filenames.
+- **Bidirectional Media Support:** Send and receive photos/images (up to 16 MB) and documents/files (up to 100 MB). Inspect metadata and download attachments locally to disk.
 - **Linux Tray Manager & Sleep Recovery:** Native StatusNotifierItem system-tray indicator with automated laptop sleep/wake recovery.
 - **Cross-Platform:** Full support for Linux, macOS, and Windows 10/11.
 
@@ -141,6 +141,8 @@ wa tui                                       # launch interactive terminal UI
 | `wa send <contact\|group> <message>` | Send a plain text message (multiple words join automatically) |
 | `wa send-image <contact> <file> [caption]` | Send an image/photo (JPEG, PNG, WebP, GIF, SVG) up to 16 MB with optional caption |
 | `wa send-file <contact> <file> [caption]` | Send a document/binary file up to 100 MB with original filename |
+| `wa media [--chat <contact>] [--type all\|image\|document] [--limit N]` | List recently received media attachments (images & documents) |
+| `wa download-media <messageId> [--out <dir-or-file>]` | Download an incoming attachment by message ID to local disk |
 | `wa receive [--once]` | Stream all incoming messages live via Server-Sent Events (SSE) |
 | `wa tui` | Open full-screen ANSI interactive terminal dashboard |
 | `wa mcp` | Launch Model Context Protocol stdio server for AI agents |
@@ -164,7 +166,7 @@ wa mcp
 node src/mcp/index.js
 ```
 
-### 9 Exposed MCP Tools
+### 12 Exposed MCP Tools
 
 | Tool | Action | Parameters | Description |
 | :--- | :--- | :--- | :--- |
@@ -175,6 +177,9 @@ node src/mcp/index.js
 | `whatsapp_send_message` | Send Text | `target`, `message` | Send plain text message (up to 65,000 characters). |
 | `whatsapp_send_image` | Send Photo | `target`, `filePath`, `caption` | Send an image file up to 16 MB with an optional caption. |
 | `whatsapp_send_document` | Send Document | `target`, `filePath`, `filename`, `caption` | Send any document or binary file up to 100 MB with custom or original filename. |
+| `whatsapp_get_recent_media` | List Incoming Media | `chatId`, `type`, `limit`, `sinceTimestamp` | List recently received photos and documents with message IDs and metadata. |
+| `whatsapp_download_media` | Download Attachment | `messageId`, `outputDir`, `filename` | Download an incoming photo or document by message ID to local disk. |
+| `whatsapp_get_media_info` | Inspect Attachment | `messageId` | Retrieve metadata (mimetype, size, caption, downloaded status) without downloading. |
 | `whatsapp_mark_seen` | Mark Read | `target` | Mark all unread messages in a chat as seen. |
 | `whatsapp_get_recent_messages` | Stream Buffer | `limit`, `sinceTimestamp`, `chatId` | Read incoming messages buffered in memory since a given timestamp. |
 
@@ -205,7 +210,7 @@ Please set up the WhatsApp CLI and Model Context Protocol (MCP) server for our e
 4. If this agent supports skills, copy `skills/whatsapp/` to our skills directory (or import `skills/whatsapp/SKILL.md` into workspace instructions).
 5. Guide me to run `wa login` in a visible terminal so I can scan the QR code with WhatsApp on my phone.
 6. Once I confirm linking, verify the connection safely by calling the `whatsapp_get_status` tool (confirm state is "ready"). Do NOT send any test messages.
-7. Confirm that all 9 WhatsApp tools are registered and ready for use.
+7. Confirm that all 12 WhatsApp tools are registered and ready for use.
 ```
 
 ---

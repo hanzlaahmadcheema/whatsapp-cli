@@ -546,6 +546,111 @@ async function cmdAutostart(argv) {
   }
 }
 
+async function cmdMedia(argv) {
+  const { base, token } = await getDaemon();
+  const limit = argv.flags.limit || "20";
+  const type = argv.flags.type || "all";
+  const chat = argv.flags.chat || argv.positional[0] || null;
+
+  let chatId = undefined;
+  if (chat) {
+    try {
+      chatId = toJid(chat);
+    } catch (_) {
+      chatId = chat;
+    }
+  }
+
+  const query = { limit, type };
+  if (chatId) query.chatId = chatId;
+
+  const res = await request(base, token, "GET", ROUTES.RECENT_MEDIA, null, { query });
+  if (!res.ok) {
+    console.error(`${EMOJI.fail} ${pc.red((res.error && res.error.message) || "Failed to fetch media.")}`);
+    process.exit(1);
+  }
+
+  const items = res.media || [];
+  if (!items.length) {
+    console.log(pc.dim("No incoming media found."));
+    return;
+  }
+
+  const headers = [
+    pc.bold("MESSAGE ID"),
+    pc.bold("DATE"),
+    pc.bold("FROM"),
+    pc.bold("TYPE"),
+    pc.bold("FILENAME / CAPTION"),
+    pc.bold("STATUS"),
+  ];
+
+  const rows = [headers];
+  for (const m of items) {
+    const d = m.timestamp ? new Date(m.timestamp * 1000).toLocaleDateString() : "";
+    const fromStr = m.fromMe ? pc.green("me") : pc.cyan(shortJid(m.chatId || m.from) || "?");
+    const typeStr = m.type === "image" ? pc.magenta("📷 image") : pc.blue("📄 doc");
+    const desc = m.filename ? (m.caption ? `${pc.bold(m.filename)} (${m.caption})` : pc.bold(m.filename)) : (m.caption || pc.dim("(no caption)"));
+    const statusStr = m.downloaded ? pc.green("downloaded") : pc.dim("remote");
+
+    rows.push([
+      pc.dim((m.messageId || "").slice(-18)),
+      pc.dim(d),
+      fromStr,
+      typeStr,
+      desc.length > 40 ? desc.slice(0, 37) + "..." : desc,
+      statusStr,
+    ]);
+  }
+
+  console.log("\n" + table(rows) + "\n");
+}
+
+async function cmdDownloadMedia(argv) {
+  const { base, token } = await getDaemon();
+  const messageId = argv.positional[0];
+  if (!messageId) {
+    console.error(`${EMOJI.fail} ${pc.red("Usage: wa download-media <messageId> [--out <dir-or-file>]")}`);
+    process.exit(2);
+  }
+
+  const out = argv.flags.out || argv.flags.o || undefined;
+  let outputDir = undefined;
+  let filename = undefined;
+
+  if (out) {
+    const fs = require("fs");
+    const path = require("path");
+    if (fs.existsSync(out) && fs.statSync(out).isDirectory()) {
+      outputDir = path.resolve(out);
+    } else {
+      outputDir = path.dirname(path.resolve(out));
+      filename = path.basename(out);
+    }
+  }
+
+  console.log(`\n${EMOJI.arrow} ${pc.dim("Downloading media for")} ${pc.cyan(messageId)}...`);
+  const res = await request(base, token, "POST", ROUTES.MEDIA_DOWNLOAD, {
+    messageId,
+    outputDir,
+    filename,
+  });
+
+  if (res.ok) {
+    const cachedBadge = res.cached ? pc.dim(" (cached)") : "";
+    console.log(`${EMOJI.ok} ${pc.green("Downloaded:")} ${pc.bold(res.filename)}${cachedBadge}`);
+    console.log(`  ${pc.dim("Location:")} ${pc.cyan(res.filePath)}`);
+    console.log(`  ${pc.dim("Type:")}     ${res.mimetype} (${formatBytes(res.size)})`);
+    if (res.caption) {
+      console.log(`  ${pc.dim("Caption:")}  ${res.caption}`);
+    }
+    console.log("");
+  } else {
+    console.error(`${EMOJI.fail} ${pc.red("Download failed:")} ${(res.error && res.error.message) || "Unknown error"}\n`);
+    process.exit(1);
+  }
+}
+
 const handlers = {
   login: cmdLogin,
   status: cmdStatus,
@@ -566,6 +671,9 @@ const handlers = {
   "send-doc": cmdSendFile,
   document: cmdSendFile,
   file: cmdSendFile,
+  media: cmdMedia,
+  "download-media": cmdDownloadMedia,
+  download: cmdDownloadMedia,
   tray: cmdTray,
   reconnect: cmdReconnect,
   autostart: cmdAutostart,

@@ -61,6 +61,48 @@ class MessageRingBuffer {
     return result.slice(-lim).reverse();
   }
 
+  getMedia({ type = "all", chatId = null, sinceTimestamp = null, limit = 20 } = {}) {
+    let result = this.buffer.filter((m) => m && m.hasMedia);
+
+    if (type && type !== "all") {
+      result = result.filter((m) => {
+        if (type === "image") return m.type === "image" || (m.mimetype && m.mimetype.startsWith("image/"));
+        if (type === "document") return m.type === "document" || (m.mimetype && !m.mimetype.startsWith("image/"));
+        return m.type === type;
+      });
+    }
+
+    if (chatId) {
+      const targetDigits = String(chatId).replace(/[^\d]/g, "");
+      const targetShort = String(chatId).split("@")[0];
+      result = result.filter((m) => {
+        const mChatId = m.chatId || "";
+        const mFrom = m.from || "";
+        const mTo = m.to || "";
+        const mChatDigits = mChatId.replace(/[^\d]/g, "");
+        const mFromDigits = mFrom.replace(/[^\d]/g, "");
+        return (
+          mChatId === chatId ||
+          mFrom === chatId ||
+          mTo === chatId ||
+          (targetShort && (mChatId.startsWith(targetShort) || mFrom.startsWith(targetShort))) ||
+          (targetDigits && (mChatDigits === targetDigits || mFromDigits === targetDigits))
+        );
+      });
+    }
+
+    if (typeof sinceTimestamp === "number" && !isNaN(sinceTimestamp)) {
+      result = result.filter((m) => {
+        const ts = m.timestamp ? (m.timestamp > 1e11 ? Math.floor(m.timestamp / 1000) : m.timestamp) : 0;
+        const sinceSec = sinceTimestamp > 1e11 ? Math.floor(sinceTimestamp / 1000) : sinceTimestamp;
+        return ts >= sinceSec;
+      });
+    }
+
+    const lim = Math.max(1, Math.min(limit || 20, this.maxSize));
+    return result.slice(-lim).reverse();
+  }
+
   clear() {
     this.buffer = [];
     this._seenIds.clear();

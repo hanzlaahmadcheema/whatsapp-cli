@@ -63,7 +63,7 @@ Please set up the WhatsApp CLI and Model Context Protocol (MCP) server for our e
 4. If this agent supports skills, copy `skills/whatsapp/` to our skills directory (or import `skills/whatsapp/SKILL.md` into workspace instructions).
 5. Guide me to run `wa login` in a visible terminal so I can scan the QR code with WhatsApp on my phone.
 6. Once I confirm linking, verify the connection safely by calling the `whatsapp_get_status` tool (confirm state is "ready"). Do NOT send any test messages.
-7. Confirm that all 9 WhatsApp tools are registered and ready for use.
+7. Confirm that all 12 WhatsApp tools are registered and ready for use.
 ```
 
 ---
@@ -180,7 +180,7 @@ Anthropic's Claude Desktop communicates with local MCP servers via standard I/O.
 #### Verification in Claude Desktop
 1. Completely quit Claude Desktop (Cmd+Q on macOS, or right-click tray icon and Exit on Windows).
 2. Start Claude Desktop.
-3. Look for the hammer / tool icon in the bottom-right corner of the prompt box. You should see `whatsapp` with all 9 tools listed:
+3. Look for the hammer / tool icon in the bottom-right corner of the prompt box. You should see `whatsapp` with all 12 tools listed:
    - `whatsapp_get_status`
    - `whatsapp_list_chats`
    - `whatsapp_list_contacts`
@@ -190,6 +190,9 @@ Anthropic's Claude Desktop communicates with local MCP servers via standard I/O.
    - `whatsapp_get_recent_messages`
    - `whatsapp_send_image`
    - `whatsapp_send_document`
+   - `whatsapp_get_recent_media`
+   - `whatsapp_download_media`
+   - `whatsapp_get_media_info`
 
 ---
 

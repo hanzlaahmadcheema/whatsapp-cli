@@ -7,11 +7,11 @@ const { generateToken, TOKEN_HEADER } = require("../ipc/token");
 const daemonStore = require("../store/daemon");
 
 class DaemonServer {
-  constructor({ service, port = 0, host = "127.0.0.1" }) {
+  constructor({ service, port = 0, host = "127.0.0.1", token = null }) {
     this.service = service;
     this.host = host;
     this.port = port;
-    this.token = generateToken();
+    this.token = token || generateToken();
     this.server = null;
     this.sseClients = new Set();
   }
@@ -56,6 +56,15 @@ class DaemonServer {
     }
     if (pathname === ROUTES.SEND_MEDIA && method === "POST") {
       return this.withBody(req, res, (body) => this.handleSendMedia(res, body));
+    }
+    if (pathname === ROUTES.MEDIA_INFO && method === "GET") {
+      return this.handleMediaInfo(req, res);
+    }
+    if (pathname === ROUTES.MEDIA_DOWNLOAD && method === "POST") {
+      return this.withBody(req, res, (body) => this.handleMediaDownload(res, body));
+    }
+    if (pathname === ROUTES.RECENT_MEDIA && method === "GET") {
+      return this.handleRecentMedia(req, res);
     }
     if (pathname === ROUTES.CHATS && method === "GET") {
       return this.handleChats(req, res);
@@ -139,6 +148,37 @@ class DaemonServer {
     } catch (err) {
       return this.json(res, 400, fail("INVALID_MEDIA", err && err.message ? err.message : String(err)));
     }
+  }
+
+  async handleMediaInfo(req, res) {
+    const qs = new URL(req.url, "http://x").searchParams;
+    const messageId = qs.get("messageId");
+    if (!messageId) {
+      return this.json(res, 400, fail("BAD_REQUEST", "`messageId` query parameter is required."));
+    }
+    const result = await this.service.getMediaInfo({ messageId });
+    const code = result.ok ? 200 : (result.error && result.error.code === "NOT_FOUND" ? 404 : 409);
+    return this.json(res, code, result);
+  }
+
+  async handleMediaDownload(res, body) {
+    const { messageId, outputDir, filename } = body || {};
+    if (!messageId) {
+      return this.json(res, 400, fail("BAD_REQUEST", "`messageId` is required in request body."));
+    }
+    const result = await this.service.downloadMedia({ messageId, outputDir, filename });
+    const code = result.ok ? 200 : (result.error && result.error.code === "NOT_FOUND" ? 404 : 409);
+    return this.json(res, code, result);
+  }
+
+  async handleRecentMedia(req, res) {
+    const qs = new URL(req.url, "http://x").searchParams;
+    const chatId = qs.get("chatId") || undefined;
+    const type = qs.get("type") || "all";
+    const limit = parseInt(qs.get("limit") || "20", 10) || 20;
+    const sinceTimestamp = qs.get("sinceTimestamp") ? parseInt(qs.get("sinceTimestamp"), 10) : undefined;
+    const result = await this.service.getRecentMedia({ chatId, type, limit, sinceTimestamp });
+    return this.json(res, 200, ok({ count: result.length, media: result }));
   }
 
   async handleChats(req, res) {

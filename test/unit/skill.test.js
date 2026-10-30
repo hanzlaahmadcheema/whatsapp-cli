@@ -7,7 +7,7 @@ const path = require("path");
 
 const SKILL_DIR = path.resolve(__dirname, "../../skills/whatsapp");
 
-test("skill manifest (skill.json) is valid and lists all 9 MCP tools", () => {
+test("skill manifest (skill.json) is valid and lists all 12 MCP tools", () => {
   const manifestPath = path.join(SKILL_DIR, "skill.json");
   assert.ok(fs.existsSync(manifestPath), "skill.json must exist");
 
@@ -30,6 +30,9 @@ test("skill manifest (skill.json) is valid and lists all 9 MCP tools", () => {
     "whatsapp_get_recent_messages",
     "whatsapp_send_image",
     "whatsapp_send_document",
+    "whatsapp_get_recent_media",
+    "whatsapp_download_media",
+    "whatsapp_get_media_info",
   ];
 
   assert.deepEqual(manifest.tools.slice().sort(), expectedTools.slice().sort());
@@ -51,7 +54,7 @@ test("SKILL.md has valid YAML frontmatter and documents key sections", () => {
   assert.ok(frontmatter.includes("name: whatsapp"));
   assert.ok(frontmatter.includes("description:"));
 
-  // Verify all 9 tools are mentioned
+  // Verify all 12 tools are mentioned
   const tools = [
     "whatsapp_get_status",
     "whatsapp_list_chats",
@@ -62,6 +65,9 @@ test("SKILL.md has valid YAML frontmatter and documents key sections", () => {
     "whatsapp_get_recent_messages",
     "whatsapp_send_image",
     "whatsapp_send_document",
+    "whatsapp_get_recent_media",
+    "whatsapp_download_media",
+    "whatsapp_get_media_info",
   ];
 
   for (const tool of tools) {
@@ -96,6 +102,9 @@ test("reference documentation and examples exist and cover all tools", () => {
     "whatsapp_get_recent_messages",
     "whatsapp_send_image",
     "whatsapp_send_document",
+    "whatsapp_get_recent_media",
+    "whatsapp_download_media",
+    "whatsapp_get_media_info",
   ];
 
   for (const tool of tools) {

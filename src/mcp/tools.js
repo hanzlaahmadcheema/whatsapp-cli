@@ -308,6 +308,124 @@ function registerTools(server, client) {
       }
     }
   );
+
+  // 10. Get Recent Media Tool
+  server.tool(
+    "whatsapp_get_recent_media",
+    "List recently received media attachments (images and documents) across conversations or for a specific chat.",
+    {
+      chatId: z
+        .string()
+        .optional()
+        .describe("Optional contact phone number (e.g. '15551234567'), contact JID (@c.us), or group JID (@g.us) to filter by"),
+      type: z
+        .enum(["all", "image", "document"])
+        .optional()
+        .default("all")
+        .describe("Filter media by type: 'image', 'document', or 'all' (default: 'all')"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .default(20)
+        .describe("Maximum number of media items to return (default: 20)"),
+      sinceTimestamp: z
+        .number()
+        .optional()
+        .describe("Filter media received after this Unix timestamp in seconds"),
+    },
+    async ({ chatId, type, limit, sinceTimestamp }) => {
+      try {
+        const result = await client.getRecentMedia({ chatId, type, limit, sinceTimestamp });
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          isError: false,
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ ok: false, error: { message: err.message } }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // 11. Download Media Tool
+  server.tool(
+    "whatsapp_download_media",
+    "Download an incoming image or document attachment from WhatsApp by message ID, saving it locally to disk.",
+    {
+      messageId: z
+        .string()
+        .min(5)
+        .describe("The serialized WhatsApp message ID containing the media attachment (e.g. 'false_15551234567@c.us_3EB0...')"),
+      outputDir: z
+        .string()
+        .optional()
+        .describe("Optional custom directory path to save the downloaded file to (defaults to .data/media)"),
+      filename: z
+        .string()
+        .optional()
+        .describe("Optional custom filename to save the attachment as (preserves extension)"),
+    },
+    async ({ messageId, outputDir, filename }) => {
+      try {
+        const result = await client.downloadMedia(messageId, { outputDir, filename });
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          isError: false,
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ ok: false, error: { message: err.message } }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // 12. Get Media Info Tool
+  server.tool(
+    "whatsapp_get_media_info",
+    "Retrieve metadata for an incoming WhatsApp media attachment (mimetype, filename, size, caption, downloaded status) without downloading file content.",
+    {
+      messageId: z
+        .string()
+        .min(5)
+        .describe("The serialized WhatsApp message ID to inspect"),
+    },
+    async ({ messageId }) => {
+      try {
+        const result = await client.getMediaInfo(messageId);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          isError: false,
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ ok: false, error: { message: err.message } }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
 }
 
 module.exports = { registerTools };

@@ -12,6 +12,8 @@ ${pc.bold("Commands:")}
   ${pc.cyan("send")} <to> <message>  Send a message to a contact or group
   ${pc.cyan("send-image")} <to> <file> [caption]  Send an image (photo) with optional caption
   ${pc.cyan("send-file")} <to> <file> [caption]   Send a document or file with original name
+  ${pc.cyan("media")} [--chat <to>]   List recently received images and documents
+  ${pc.cyan("download-media")} <id> [--out <path>]  Download an incoming image or document
   ${pc.cyan("chats")}                List recent chats
   ${pc.cyan("contacts")}             List contacts
   ${pc.cyan("history")} <to>         Show message history for a chat

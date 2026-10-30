@@ -1,13 +1,13 @@
 ---
 name: whatsapp
-description: Control WhatsApp via the WhatsApp CLI Model Context Protocol (MCP) server. Use this skill whenever an agent needs to inspect WhatsApp connection and account status, list recent chats or contacts, read message history, stream recent incoming messages, mark messages as read, send text messages, or send photos/documents to contacts and groups.
+description: Control WhatsApp via the WhatsApp CLI Model Context Protocol (MCP) server. Use this skill whenever an agent needs to inspect WhatsApp connection and account status, list recent chats or contacts, read message history, stream recent incoming messages, mark messages as read, send text messages, send photos/documents to contacts and groups, list recently received incoming media, inspect attachment metadata, or download incoming photos and documents to disk.
 ---
 
 # WhatsApp MCP Agent Skill
 
 This skill guides autonomous agents and AI coding assistants in interacting with WhatsApp through the WhatsApp CLI Model Context Protocol (MCP) server.
 
-The server exposes 9 specialized tools that interface with a long-running, token-authenticated local daemon backed by Puppeteer and `whatsapp-web.js`.
+The server exposes 12 specialized tools that interface with a long-running, token-authenticated local daemon backed by Puppeteer and `whatsapp-web.js`.
 
 ---
 
@@ -52,6 +52,9 @@ Always call `whatsapp_get_status` before performing read/write operations:
 | `whatsapp_send_message` | Send plain text message | `target`, `message` (up to 65k chars) | `{ ok, messageId, to, timestamp }` |
 | `whatsapp_send_image` | Send photo with optional caption | `target`, `filePath`, `caption` | `{ ok, messageId, to, filename, mimetype, timestamp }` |
 | `whatsapp_send_document` | Send file with original filename | `target`, `filePath`, `filename`, `caption` | `{ ok, messageId, to, filename, mimetype, timestamp }` |
+| `whatsapp_get_recent_media` | List incoming images & documents | `chatId`, `type` (image/doc/all), `limit`, `sinceTimestamp` | `{ ok, count, media: [...] }` |
+| `whatsapp_download_media` | Download attachment by message ID | `messageId`, `outputDir`, `filename` | `{ ok, messageId, filePath, filename, mimetype, size, caption, cached }` |
+| `whatsapp_get_media_info` | Inspect media metadata | `messageId` | `{ ok, media: { messageId, type, mimetype, filename, filesize, caption, downloaded, filePath } }` |
 | `whatsapp_mark_seen` | Mark a chat as read | `target` | `{ ok, chatId }` |
 | `whatsapp_get_recent_messages` | Read incoming SSE ring buffer | `limit` (max 100), `sinceTimestamp`, `chatId` | `{ ok, bufferedTotal, count, messages: [...] }` |
 
@@ -84,6 +87,13 @@ All message, history, and media tools accept a flexible `target` string:
 - **Filename Handling:** Defaults to the file's original basename on disk. Pass `filename` to override what the recipient sees.
 - **MIME Detection:** Automatically detects MIME types via extension; defaults to `application/octet-stream`.
 
+### Receiving & Downloading Media (`whatsapp_get_recent_media`, `whatsapp_download_media`)
+- **Discovery:** Use `whatsapp_get_recent_media({ type, chatId, limit })` to list incoming photos and documents across conversations or from a specific chat.
+- **Downloading:** Pass the `messageId` to `whatsapp_download_media({ messageId })` to download and save the file to local disk.
+- **Local File Paths:** The tool returns an absolute `filePath` (stored by default in `.data/media/`) which agents can directly inspect, read, or process.
+- **Caching:** If the media was already downloaded, the existing file is returned immediately with `cached: true` without re-downloading.
+- **Path Traversal Protection:** All filenames are sanitized to prevent directory traversal; custom output directories are strictly validated.
+
 ### Common File Validation Requirements
 Before calling `whatsapp_send_image` or `whatsapp_send_document`:
 1. The path must point to an **existing regular file** (`fs.statSync().isFile()`). Directories, FIFO pipes, and sockets are rejected.
@@ -111,6 +121,12 @@ The daemon maintains an in-memory ring buffer of the last 100 incoming messages 
 1. Query messages: `whatsapp_get_recent_messages({ limit: 20, sinceTimestamp: <last_checked_time> })`.
 2. Filter by `chatId` if following a specific conversation.
 3. Mark acknowledged messages as read: `whatsapp_mark_seen({ target: "<chatId>" })`.
+
+### Workflow 4: Finding and Downloading Incoming Photos & Documents
+1. Find recent media: `whatsapp_get_recent_media({ type: "all" })` or filter by contact `whatsapp_get_recent_media({ chatId: "15551234567" })`.
+2. Inspect attachment metadata: `whatsapp_get_media_info({ messageId: "<messageId>" })`.
+3. Download the attachment: `whatsapp_download_media({ messageId: "<messageId>" })`.
+4. The response provides the absolute `filePath`, `mimetype`, `size`, and `filename` for immediate agent processing.
 
 For complete request and response payloads across scenarios, see [Tool Usage Examples](./examples/tool-usage.md).
 
