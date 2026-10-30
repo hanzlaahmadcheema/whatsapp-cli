@@ -20,6 +20,11 @@ const COMMANDS = new Set([
   "send-doc",
   "document",
   "file",
+  "tray",
+  "reconnect",
+  "autostart",
+  "stop",
+  "restart",
 ]);
 
 function parseArgs(argv) {

@@ -42,7 +42,15 @@ async function main() {
     }
   }
 
-  const service = new WhatsAppService({});
+  const { loadSettings } = require("../config/settings");
+  const settings = loadSettings();
+
+  const service = new WhatsAppService({
+    autoReconnectOnResume: settings.autoReconnectOnResume,
+    maxRecoveryAttempts: settings.maxRecoveryAttempts,
+    networkTimeoutMs: settings.networkTimeoutMs,
+    backoffBaseMs: settings.retryBackoffBaseMs,
+  });
   const server = new DaemonServer({ service, host: args.host, port: args.port });
 
   service.on("ready", () => {

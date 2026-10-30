@@ -1,0 +1,14 @@
+[Unit]
+Description=WhatsApp CLI System Tray Manager
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/hanzlaahmad/PersonalProjects/whatsapp-cli
+ExecStart=/usr/bin/python3 /home/hanzlaahmad/PersonalProjects/whatsapp-cli/src/tray/manager.py
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=graphical-session.target

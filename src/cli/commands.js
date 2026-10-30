@@ -401,6 +401,151 @@ async function cmdMcp() {
   await startMcpServer();
 }
 
+
+async function cmdReconnect() {
+  const { base, token } = await getDaemon();
+  process.stdout.write(`${pc.cyan("⟳")} Reconnecting WhatsApp session…\n`);
+  try {
+    const res = await request(base, token, "POST", ROUTES.RECONNECT);
+    if (res.ok) {
+      console.log(`${EMOJI.ok} Reconnected successfully. State: ${pc.green(res.state || "ready")}`);
+    } else {
+      console.error(`${EMOJI.fail} Reconnect failed: ${pc.red(res.error?.message || "Unknown error")}`);
+      process.exit(1);
+    }
+  } catch (err) {
+    console.error(`${EMOJI.fail} Reconnect request failed: ${pc.red(err.message)}`);
+    process.exit(1);
+  }
+}
+
+async function cmdStop() {
+  const daemonStore = require("../store/daemon");
+  const existing = daemonStore.read();
+  if (!existing || !existing.pid) {
+    console.log(`${pc.dim("WhatsApp daemon is not running.")}`);
+    return;
+  }
+  let alive = false;
+  try {
+    process.kill(existing.pid, 0);
+    alive = true;
+  } catch (_) {}
+
+  if (alive) {
+    try {
+      process.kill(existing.pid, "SIGTERM");
+      console.log(`${EMOJI.ok} Sent stop signal to WhatsApp daemon (pid ${existing.pid}).`);
+    } catch (err) {
+      console.error(`${EMOJI.fail} Failed to stop daemon: ${err.message}`);
+    }
+  } else {
+    console.log(`${pc.dim("WhatsApp daemon was not running.")}`);
+  }
+  daemonStore.remove();
+}
+
+async function cmdRestart() {
+  await cmdStop();
+  await new Promise((r) => setTimeout(r, 1000));
+  const { spawnDetached } = require("../daemon");
+  spawnDetached();
+  console.log(`${EMOJI.ok} Restarted WhatsApp daemon.`);
+}
+
+async function cmdTray(argv) {
+  const { startTrayManager, stopTrayManager, getTrayStatus } = require("../tray");
+  if (argv && argv.flags && argv.flags.stop) {
+    const res = stopTrayManager();
+    if (res.stopped) {
+      console.log(`${EMOJI.ok} WhatsApp tray manager stopped (pid ${res.pid}).`);
+    } else {
+      console.log(`${pc.dim("WhatsApp tray manager is not running.")}`);
+    }
+    return;
+  }
+
+  if (argv && argv.flags && argv.flags.status) {
+    const status = getTrayStatus();
+    if (status.running) {
+      console.log(`${EMOJI.ok} WhatsApp tray manager is running (pid ${status.pid}).`);
+    } else {
+      console.log(`${pc.dim("WhatsApp tray manager is not running.")}`);
+    }
+    return;
+  }
+
+  const foreground = Boolean(argv && argv.flags && (argv.flags.foreground || argv.flags.f));
+  const res = startTrayManager({ foreground });
+  if (res.alreadyRunning) {
+    console.log(`${EMOJI.ok} WhatsApp tray manager is already running (pid ${res.pid}).`);
+  } else if (res.detached) {
+    console.log(`${EMOJI.ok} WhatsApp tray manager started in background (pid ${res.pid}).`);
+  }
+}
+
+async function cmdAutostart(argv) {
+  const fs = require("fs");
+  const path = require("path");
+  const os = require("os");
+  const { execSync } = require("child_process");
+  const { saveSettings, loadSettings } = require("../config/settings");
+  const { paths } = require("../config/paths");
+
+  const action = ((argv && argv.positional && argv.positional[0]) || "status").toLowerCase();
+  const systemdUserDir = path.join(os.homedir(), ".config", "systemd", "user");
+  const trayServiceDest = path.join(systemdUserDir, "whatsapp-tray.service");
+  const daemonServiceDest = path.join(systemdUserDir, "whatsapp-daemon.service");
+  const trayServiceSrc = path.join(paths.root, "systemd", "whatsapp-tray.service");
+  const daemonServiceSrc = path.join(paths.root, "systemd", "whatsapp-daemon.service");
+
+  if (action === "enable") {
+    fs.mkdirSync(systemdUserDir, { recursive: true });
+    fs.copyFileSync(trayServiceSrc, trayServiceDest);
+    fs.copyFileSync(daemonServiceSrc, daemonServiceDest);
+    try {
+      execSync("systemctl --user daemon-reload", { stdio: "ignore" });
+      execSync("systemctl --user enable whatsapp-tray.service", { stdio: "ignore" });
+      execSync("systemctl --user enable whatsapp-daemon.service", { stdio: "ignore" });
+      saveSettings({ launchTrayOnLogin: true });
+      console.log(`${EMOJI.ok} Enabled WhatsApp autostart services (systemd user unit).`);
+    } catch (err) {
+      console.error(`${EMOJI.fail} Failed to enable systemd autostart: ${err.message}`);
+      process.exit(1);
+    }
+  } else if (action === "disable") {
+    try {
+      execSync("systemctl --user disable whatsapp-tray.service", { stdio: "ignore" });
+      execSync("systemctl --user disable whatsapp-daemon.service", { stdio: "ignore" });
+      if (fs.existsSync(trayServiceDest)) fs.unlinkSync(trayServiceDest);
+      if (fs.existsSync(daemonServiceDest)) fs.unlinkSync(daemonServiceDest);
+      execSync("systemctl --user daemon-reload", { stdio: "ignore" });
+      saveSettings({ launchTrayOnLogin: false });
+      console.log(`${EMOJI.ok} Disabled WhatsApp autostart services.`);
+    } catch (err) {
+      console.error(`${EMOJI.fail} Failed to disable systemd autostart: ${err.message}`);
+      process.exit(1);
+    }
+  } else {
+    const settings = loadSettings();
+    let trayEnabled = false;
+    let daemonEnabled = false;
+    try {
+      const out = execSync("systemctl --user is-enabled whatsapp-tray.service 2>/dev/null", { encoding: "utf8" }).trim();
+      trayEnabled = out === "enabled";
+    } catch (_) {}
+    try {
+      const out = execSync("systemctl --user is-enabled whatsapp-daemon.service 2>/dev/null", { encoding: "utf8" }).trim();
+      daemonEnabled = out === "enabled";
+    } catch (_) {}
+
+    console.log(`${pc.bold("WhatsApp Autostart Status:")}`);
+    console.log(`  Tray manager autostart: ${trayEnabled ? pc.green("enabled") : pc.dim("disabled")}`);
+    console.log(`  Daemon autostart:       ${daemonEnabled ? pc.green("enabled") : pc.dim("disabled")}`);
+    console.log(`  Config launchTrayOnLogin: ${settings.launchTrayOnLogin ? pc.green("true") : pc.dim("false")}`);
+  }
+}
+
 const handlers = {
   login: cmdLogin,
   status: cmdStatus,
@@ -421,6 +566,11 @@ const handlers = {
   "send-doc": cmdSendFile,
   document: cmdSendFile,
   file: cmdSendFile,
+  tray: cmdTray,
+  reconnect: cmdReconnect,
+  autostart: cmdAutostart,
+  stop: cmdStop,
+  restart: cmdRestart,
 };
 
 module.exports = handlers;

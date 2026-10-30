@@ -13,6 +13,9 @@ const ROUTES = Object.freeze({
   CHAT_SEEN: "/chat/seen",
   CHAT_ARCHIVE: "/chat/archive",
   SEND_MEDIA: "/send-media",
+  RECONNECT: "/reconnect",
+  SUSPEND: "/suspend",
+  RESUME: "/resume",
 });
 
 const STATE = Object.freeze({

@@ -54,11 +54,25 @@ class WhatsAppService extends EventEmitter {
       this.lastError = null;
       this.refreshAccountInfo();
     });
+    this.controller.on("recovery_success", ({ attempt }) => {
+      this.lastError = null;
+      this.broadcast({ event: "recovery_success", attempt });
+    });
+    this.controller.on("recovery_failed", ({ attempts, error }) => {
+      this.state = STATE.ERROR;
+      this.lastError = `Recovery failed after ${attempts} attempts: ${error}`;
+      this.broadcast({ event: "recovery_failed", attempts, error: this.lastError });
+    });
     this.controller.on("recovering", () => {
       this.state = STATE.CONNECTING;
       this.lastError = "WhatsApp page reloaded — reconnecting…";
       this.broadcast({ event: "state", state: STATE.CONNECTING, reason: "reconnecting" });
     });
+
+    const { SleepNotifier } = require("./sleep");
+    this.sleepNotifier = opts.sleepNotifier || new SleepNotifier(opts.sleepOpts || {});
+    this.sleepNotifier.on("suspend", () => this.handleSuspend());
+    this.sleepNotifier.on("resume", () => this.handleResume());
     // Forward raw client-level events the CLI cares about (QR, auth, message)
     // over SSE. The sub-controller also emits "state" so only wire one path.
     const client = this.controller.client;
@@ -84,11 +98,61 @@ class WhatsAppService extends EventEmitter {
   }
 
   async start() {
+    if (this.sleepNotifier && typeof this.sleepNotifier.start === "function") {
+      this.sleepNotifier.start();
+    }
     this.controller.start().catch((err) => {
       this.lastError = String(err && err.message ? err.message : err);
       this.state = STATE.ERROR;
       this.broadcast({ event: "error", message: this.lastError });
     });
+  }
+
+  handleSuspend() {
+    this.state = STATE.CONNECTING;
+    this.lastError = "System suspended — waiting for resume…";
+    this.broadcast({ event: "sleep", timestamp: Date.now() });
+    if (this.controller && typeof this.controller.suspend === "function") {
+      this.controller.suspend();
+    }
+  }
+
+  async handleResume() {
+    this.broadcast({ event: "resume", timestamp: Date.now() });
+    this.lastError = "System resumed — checking network & recovering…";
+    this.broadcast({ event: "state", state: STATE.CONNECTING, reason: "resuming" });
+    try {
+      if (this.controller && typeof this.controller.resume === "function") {
+        await this.controller.resume({
+          autoReconnect: this.opts.autoReconnectOnResume !== false,
+          networkTimeoutMs: this.opts.networkTimeoutMs ?? 30000,
+          dnsLookupFn: this.opts.dnsLookupFn,
+        });
+      }
+      await this.refreshAccountInfo();
+    } catch (err) {
+      this.state = STATE.ERROR;
+      this.lastError = "Resume recovery failed: " + String((err && err.message) || err);
+      this.broadcast({ event: "state", state: STATE.ERROR, error: this.lastError });
+    }
+  }
+
+  async recover() {
+    this.state = STATE.CONNECTING;
+    this.lastError = "Manual reconnect requested — reconnecting…";
+    this.broadcast({ event: "state", state: STATE.CONNECTING, reason: "reconnecting" });
+    try {
+      if (this.controller && typeof this.controller.recover === "function") {
+        await this.controller.recover();
+      }
+      await this.refreshAccountInfo();
+      return { ok: true, state: this.state };
+    } catch (err) {
+      this.state = STATE.ERROR;
+      this.lastError = "Reconnect failed: " + String((err && err.message) || err);
+      this.broadcast({ event: "state", state: STATE.ERROR, error: this.lastError });
+      throw err;
+    }
   }
 
   async refreshAccountInfo() {
@@ -315,6 +379,9 @@ class WhatsAppService extends EventEmitter {
   }
 
   stop() {
+    if (this.sleepNotifier && typeof this.sleepNotifier.stop === "function") {
+      this.sleepNotifier.stop();
+    }
     if (this._heartbeatTimer) {
       clearInterval(this._heartbeatTimer);
       this._heartbeatTimer = null;

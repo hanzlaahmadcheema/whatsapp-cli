@@ -49,7 +49,10 @@ test("daemon serves status, send, chats, contacts, history over HTTP", async (t)
 
   const server = new DaemonServer({ service });
   const port = await server.start();
-  t.after(async () => server.stop());
+  t.after(async () => {
+    server.stop();
+    service.stop();
+  });
 
   const base = `http://127.0.0.1:${port}`;
   const token = server.token;
@@ -89,7 +92,10 @@ test("daemon rejects requests with a bad token", async (t) => {
   service.state = STATE.READY;
   const server = new DaemonServer({ service });
   const port = await server.start();
-  t.after(async () => server.stop());
+  t.after(async () => {
+    server.stop();
+    service.stop();
+  });
 
   const res = await fetch(`http://127.0.0.1:${port}/status`, {
     headers: { [TOKEN_HEADER]: "wrong" },
@@ -140,6 +146,7 @@ test("service detects detached-frame errors and triggers recovery", async () => 
   assert.match(service.lastError, /reconnecting/);
   await recoverPromise;
   assert.ok(states.some((e) => e.state === STATE.CONNECTING));
+  service.stop();
 });
 
 test("store daemon file roundtrip", () => {

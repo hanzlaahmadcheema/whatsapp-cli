@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- WhatsApp Bubble Base in Red -->
+  <path fill="#E53935" d="M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.38 5.08L2 22l5.07-1.33C8.52 21.52 10.21 22 12 22c5.52 0 10-4.48 10-10S17.52 2 12 2z"/>
+  <!-- Status Badge: Error Exclamation -->
+  <circle cx="17" cy="17" r="6" fill="#B71C1C" stroke="#ffffff" stroke-width="1.5"/>
+  <rect x="16.2" y="13.5" width="1.6" height="4" rx="0.8" fill="#ffffff"/>
+  <circle cx="17" cy="19.2" r="0.9" fill="#ffffff"/>
+</svg>

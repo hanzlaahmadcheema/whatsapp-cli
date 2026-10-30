@@ -22,6 +22,9 @@ class Controller extends EventEmitter {
     this._attempts = 0;
     this.reconnectTimer = null;
     this._probePromise = null;
+    this._recoveringPromise = null;
+    this._suspended = false;
+    this.maxRecoveryAttempts = opts.maxRecoveryAttempts || 5;
     this.state = STATE.CONNECTING;
     this.net = {
       destroyTimeoutMs: opts.destroyTimeoutMs || DESTROY_TIMEOUT_MS,
@@ -73,8 +76,8 @@ class Controller extends EventEmitter {
     this._probePromise = (async () => {
       try {
         const usable = await isClientUsable(this.client.client, {
-          attempts: 6,
-          delayMs: 1500,
+          attempts: this.opts.probeAttempts || 6,
+          delayMs: this.opts.probeDelayMs !== undefined ? this.opts.probeDelayMs : 1500,
         });
         this.emit("probe_done", { usable });
         if (usable) {
@@ -96,7 +99,16 @@ class Controller extends EventEmitter {
   }
 
   scheduleReconnect() {
-    if (!this.running || this.reconnectTimer) return;
+    if (!this.running || this.reconnectTimer || this._suspended) return;
+    if (this._attempts >= this.maxRecoveryAttempts) {
+      this.state = STATE.ERROR;
+      this.emit("state", STATE.ERROR);
+      this.emit("recovery_failed", {
+        attempts: this._attempts,
+        error: "Maximum reconnect attempts reached",
+      });
+      return;
+    }
     const delayMs = Math.min(
       this.net.backoffBaseMs * 2 ** (this._attempts || 0),
       MAX_BACKOFF_MS
@@ -108,13 +120,18 @@ class Controller extends EventEmitter {
 
   async doReconnect() {
     this.reconnectTimer = null;
-    if (!this.running) return;
+    if (!this.running || this._suspended) return;
     try {
       await this.destroyClient();
     } catch (_) {}
     try {
       await this.initializeClient();
-      this._attempts = 0;
+      const usable = await this.handleReadinessProbe();
+      if (usable) {
+        this._attempts = 0;
+      } else {
+        this.scheduleReconnect();
+      }
     } catch (err) {
       this.emit("reconnect_error", err);
       // A hung attempt (e.g. after laptop sleep the Chromium profile is still
@@ -123,32 +140,105 @@ class Controller extends EventEmitter {
     }
   }
 
+  suspend() {
+    this._suspended = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.state = STATE.CONNECTING;
+    this.emit("state", STATE.CONNECTING);
+    this.emit("suspended");
+  }
+
+  async resume(opts = {}) {
+    this._suspended = false;
+    this.emit("resumed");
+    const autoReconnect = opts.autoReconnect !== false;
+    if (!autoReconnect) return;
+
+    const { checkNetworkReady } = require("./sleep");
+    const networkReady = await checkNetworkReady({
+      timeoutMs: opts.networkTimeoutMs ?? 30000,
+      intervalMs: 1500,
+      dnsLookupFn: opts.dnsLookupFn,
+    });
+
+    if (!networkReady) {
+      this.state = STATE.ERROR;
+      this.emit("state", STATE.ERROR);
+      const err = new Error("Network not available after system resume");
+      this.emit("reconnect_error", err);
+      this.emit("recovery_failed", { attempts: 0, error: err.message });
+      throw err;
+    }
+
+    return await this.recover();
+  }
+
   // Recover from a dead Puppeteer frame without waiting for a disconnect event.
   // WhatsApp Web reloads the page under a long-running client; every injected
   // call then throws "Attempted to use detached Frame". Destroying and
   // reinitializing re-links the preserved LocalAuth session.
   async recover() {
-    if (this._recovering) return;
-    this._recovering = true;
-    try {
+    if (this._recoveringPromise) return this._recoveringPromise;
+    this._recoveringPromise = (async () => {
       this.emit("recovering");
       if (this.reconnectTimer) {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
       }
-      try {
-        await this.destroyClient();
-      } catch (_) {}
-      try {
-        await this.initializeClient();
-        this._attempts = 0;
-      } catch (err) {
-        this.emit("reconnect_error", err);
-        // Keep the loop alive so a lock-left-behind-by-sleep can clear itself.
-        this.scheduleReconnect();
+      this.state = STATE.CONNECTING;
+      this.emit("state", STATE.CONNECTING);
+
+      let lastErr = null;
+      const maxAttempts = this.maxRecoveryAttempts;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (this._suspended) {
+          throw new Error("Recovery interrupted: system suspended");
+        }
+        try {
+          try {
+            await this.destroyClient();
+          } catch (_) {}
+
+          await this.initializeClient();
+
+          // After initialization, probe operability before considering recovery successful
+          const usable = await this.handleReadinessProbe();
+          if (usable) {
+            this._attempts = 0;
+            this.emit("recovery_success", { attempt });
+            return true;
+          }
+          throw new Error("Readiness probe failed after client initialization");
+        } catch (err) {
+          lastErr = err;
+          this.emit("reconnect_error", err);
+          if (attempt < maxAttempts && !this._suspended) {
+            const delayMs = Math.min(
+              this.net.backoffBaseMs * 2 ** (attempt - 1),
+              MAX_BACKOFF_MS
+            );
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+        }
       }
+
+      this.state = STATE.ERROR;
+      this.emit("state", STATE.ERROR);
+      this.emit("recovery_failed", {
+        attempts: maxAttempts,
+        error: lastErr ? lastErr.message : "Recovery attempts exhausted",
+      });
+      throw lastErr || new Error("Recovery failed after max attempts");
+    })();
+
+    try {
+      return await this._recoveringPromise;
     } finally {
-      this._recovering = false;
+      this._recoveringPromise = null;
     }
   }
 

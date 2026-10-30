@@ -1,0 +1,15 @@
+[Unit]
+Description=WhatsApp CLI Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/hanzlaahmad/PersonalProjects/whatsapp-cli
+ExecStart=/usr/bin/node /home/hanzlaahmad/PersonalProjects/whatsapp-cli/src/daemon/index.js --foreground
+Restart=on-failure
+RestartSec=5s
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target

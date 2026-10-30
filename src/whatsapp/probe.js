@@ -80,11 +80,23 @@ function withTimeout(promise, ms) {
   if (!promise || typeof promise.then !== "function") {
     return Promise.resolve(promise);
   }
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("probe timeout")), ms);
+  });
+
   return Promise.race([
-    Promise.resolve(promise),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("probe timeout")), ms)
+    promise.then(
+      (val) => {
+        if (timer) clearTimeout(timer);
+        return val;
+      },
+      (err) => {
+        if (timer) clearTimeout(timer);
+        throw err;
+      }
     ),
+    timeoutPromise,
   ]);
 }
 

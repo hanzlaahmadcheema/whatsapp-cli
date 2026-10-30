@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- WhatsApp Bubble Base in Grey -->
+  <path fill="#757575" d="M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.38 5.08L2 22l5.07-1.33C8.52 21.52 10.21 22 12 22c5.52 0 10-4.48 10-10S17.52 2 12 2z"/>
+  <!-- Status Badge: Offline Slash/Prohibition -->
+  <circle cx="17" cy="17" r="6" fill="#424242" stroke="#ffffff" stroke-width="1.5"/>
+  <line x1="14" y1="14" x2="20" y2="20" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round"/>
+</svg>

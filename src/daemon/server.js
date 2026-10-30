@@ -75,6 +75,15 @@ class DaemonServer {
     if (pathname === ROUTES.CHAT_ARCHIVE && method === "POST") {
       return this.withBody(req, res, (body) => this.handleChatAction(res, body, "setArchived", body && { archived: !!body.archived }));
     }
+    if (pathname === ROUTES.RECONNECT && method === "POST") {
+      return this.handleReconnect(res);
+    }
+    if (pathname === ROUTES.SUSPEND && method === "POST") {
+      return this.handleSuspend(res);
+    }
+    if (pathname === ROUTES.RESUME && method === "POST") {
+      return this.handleResume(res);
+    }
 
     return this.json(res, 404, fail("NOT_FOUND", `No route for ${method} ${pathname}`));
   }
@@ -172,6 +181,25 @@ class DaemonServer {
     this.broadcast({ event: "logout" });
     await this.service.controller.client?.client?.logout?.();
     return this.json(res, 200, ok({ state: STATE.LOGGED_OUT }));
+  }
+
+  async handleReconnect(res) {
+    try {
+      const result = await this.service.recover();
+      return this.json(res, 200, ok({ state: this.service.state, ...(result || {}) }));
+    } catch (err) {
+      return this.json(res, 500, fail("RECONNECT_FAILED", String((err && err.message) || err)));
+    }
+  }
+
+  async handleSuspend(res) {
+    this.service.handleSuspend();
+    return this.json(res, 200, ok({ state: this.service.state }));
+  }
+
+  async handleResume(res) {
+    this.service.handleResume();
+    return this.json(res, 200, ok({ state: this.service.state }));
   }
 
   json(res, code, payload) {

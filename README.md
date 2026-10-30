@@ -68,6 +68,11 @@ wa logout     # unlink the device
 | `wa logout` | Force logout / unlink the device |
 | `wa tui` | Full-screen interactive UI |
 | `wa mcp` | Launch MCP (Model Context Protocol) stdio server |
+| `wa tray [--foreground]` | Launch Linux StatusNotifierItem / AppIndicator system tray manager |
+| `wa reconnect` | Trigger controlled session recovery |
+| `wa autostart [enable\|disable\|status]` | Manage systemd user unit autostart |
+| `wa stop` | Stop background WhatsApp daemon |
+| `wa restart` | Restart background WhatsApp daemon |
 
 ## FAQ / notes
 
@@ -135,6 +140,86 @@ All 9 tools communicate locally with the background daemon over authenticated lo
 9. `whatsapp_get_recent_messages`: Retrieve incoming messages from the in-memory ring buffer.
 
 See [`skills/whatsapp/SKILL.md`](./skills/whatsapp/SKILL.md) for full instructions and troubleshooting.
+
+## Linux System Tray Manager & Suspend/Resume Recovery
+
+`wa` includes a native Linux system-tray indicator and automated suspend/resume recovery manager designed for Wayland (Hyprland, Quickshell, Waybar) and X11 (GNOME, KDE).
+
+### 1. Tray Architecture & Icon States
+
+The system tray manager (`src/tray/manager.py`) is a lightweight StatusNotifierItem (SNI) service using system `AyatanaAppIndicator3` and `Gtk 3.0` bindings (no Electron or heavy runtime required). It integrates natively into Quickshell (`end4-pC`), Waybar, or any FreeDesktop StatusNotifierWatcher host.
+
+Real-time daemon synchronization is maintained via Server-Sent Events (`GET /receive`) with automated polling fallback.
+
+#### Vector SVG Visual States (`assets/tray/`):
+
+| State | Appearance | Meaning |
+|---|---|---|
+| **Ready** | Green (`#25D366`) with checkmark badge | Daemon is connected, authenticated, and verified operable |
+| **Connecting** | Blue (`#0288D1`) with syncing dots badge | Establishing session, syncing messages, or resuming |
+| **Recovering** | Amber (`#FF9800`) with circular sync arrow badge | Reconnecting session after network drop or frame detachment |
+| **Error** | Red (`#E53935`) with exclamation warning badge | Recovery attempts exhausted or intervention needed |
+| **Offline** | Grey (`#757575`) with slash badge | WhatsApp daemon stopped or unavailable |
+
+### 2. Tray Menu Controls
+
+Right-clicking or clicking the tray icon opens a native menu with:
+- **Connection status**: Current status label with live updates.
+- **Account details**: Linked phone number and pushname.
+- **Last error / Last connected time**: Helpful contextual status.
+- **View Chats**: Native dialog displaying active chats, unread badges, and contact details.
+- **View Recent Messages**: Scrollable recent message history.
+- **Reconnect**: Triggers real, controlled session recovery (`POST /reconnect`).
+- **Daemon Lifecycle**: Start, Stop, and Restart controls.
+- **Daemon Logs**: Open system logs in default editor (`~/.local/state/whatsapp-cli/daemon.log`).
+- **Preferences & Autostart**: Configuration dialog for login autostart, auto-start daemon, notifications, and retry backoff.
+- **Quit**: Exit the tray manager without killing the daemon.
+
+### 3. Suspend / Resume Lifecycle & Recovery
+
+#### The Problem:
+When laptops sleep and resume, the network interface drops and Chromium in the background detaches or attempts to reload `web.whatsapp.com` before Wi-Fi and DNS stabilize. In standard clients, this leads to an infinite reconnect loop wedged in `CONNECTING` with `WhatsApp page reloaded — reconnecting…`.
+
+#### The Fix:
+1. **Sleep Detection**: The daemon listens to systemd-logind's `PrepareForSleep` DBus signal via `src/daemon/sleep.js`.
+2. **Quiescence**: Upon impending sleep (`PrepareForSleep(true)`), incoming operations pause, active probe timers clear, and the daemon enters a suspended state rather than reporting stale readiness.
+3. **Network Stabilization**: On wake (`PrepareForSleep(false)`), the daemon polls network and DNS reachability for `web.whatsapp.com` with exponential backoff before initiating reconnection.
+4. **Safe Chrome Recovery**: Orphaned Chromium lock files bound to `.wwebjs_auth` are safely cleaned without affecting shared browser processes.
+5. **Readiness Probe Verification**: Reconnection is verified with `isClientUsable()` before advertising `READY`.
+6. **Bounded Backoff & Error Escalation**: Rather than looping infinitely, recovery retries with exponential backoff up to `maxRecoveryAttempts` (configurable, default 3–5). If recovery repeatedly fails, it transitions to a genuine `ERROR` state with user notification.
+
+### 4. Autostart Configuration
+
+Manage systemd user services (no root privileges required):
+
+```bash
+# Enable login autostart for both tray manager and daemon
+wa autostart enable
+
+# Check current autostart status
+wa autostart status
+
+# Disable autostart
+wa autostart disable
+```
+
+Systemd unit files are provided in [`systemd/whatsapp-daemon.service`](./systemd/whatsapp-daemon.service) and [`systemd/whatsapp-tray.service`](./systemd/whatsapp-tray.service).
+
+### 5. Launching the Tray Manager
+
+```bash
+# Launch in background (detached)
+wa tray
+
+# Launch in foreground with logs
+wa tray --foreground
+
+# Check running status
+wa tray --status
+
+# Stop tray manager
+wa tray --stop
+```
 
 ## The whatsapp-web.js v1.34.7 patch
 

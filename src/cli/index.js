@@ -20,6 +20,9 @@ ${pc.cyan("receive")}               Stream incoming messages (Ctrl-C to stop)
   ${pc.cyan("daemon")}               Show daemon state
   ${pc.cyan("tui")}                  Launch interactive TUI
   ${pc.cyan("mcp")}                  Start MCP (Model Context Protocol) stdio server
+  ${pc.cyan("tray")}                 Manage Linux system tray manager (--foreground, --stop, --status)
+  ${pc.cyan("reconnect")}            Trigger controlled WhatsApp session recovery
+  ${pc.cyan("autostart")} [action]   Manage systemd user service autostart (enable, disable, status)
 
 ${pc.dim("Options:")}
   ${pc.dim("--help / -h")}           Show this help
