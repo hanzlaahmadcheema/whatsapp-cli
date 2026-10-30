@@ -6,25 +6,7 @@ const { fetchAccountInfo, withTimeout } = require("../whatsapp/probe");
 const { STATE } = require("../ipc/protocol");
 const { ok, fail } = require("../ipc/protocol");
 const stateStore = require("../store/state");
-
-function messageSummary(m) {
-  return {
-    id: m.id && (m.id._serialized || m.id),
-    from: m.from,
-    to: m.to,
-    author: m.author || null,
-    body: m.body || "",
-    timestamp: m.timestamp,
-    ack: typeof m.ack === "number" ? m.ack : null,
-    hasMedia: !!m.hasMedia,
-    type: m.type || null,
-    isForwarded: !!m.isForwarded,
-    mimetype: m.mimetype || null,
-    filename: m.filename || null,
-    filesize: m.size || m.filesize || null,
-    caption: m.hasMedia ? (m.body || "") : "",
-  };
-}
+const { ContactCache, enrichMessageSummary, messageSummary } = require("../conversation");
 
 class WhatsAppService extends EventEmitter {
   constructor(opts = {}) {
@@ -34,6 +16,7 @@ class WhatsAppService extends EventEmitter {
     this.state = STATE.UNLINKED;
     this.lastError = null;
     this.account = null;
+    this._contactCache = new ContactCache();
     this._subscribers = new Set();
     this._heartbeatTimer = setInterval(() => this._checkHeartbeat(), 30000);
 
@@ -165,11 +148,23 @@ class WhatsAppService extends EventEmitter {
       if (info) {
         this.account = info;
         stateStore.update({ account: info, linkedAt: Date.now() });
+        this.refreshContactsCache().catch(() => {});
       }
     } catch (err) {
       this.lastError = "Account info fetch failed: " + String((err && err.message) || err);
     }
     return this.account;
+  }
+
+  async refreshContactsCache() {
+    if (this.state === STATE.READY && this.client?.getContacts) {
+      try {
+        const contacts = await this.withClient("getContacts", () => this.client.getContacts(), 10000);
+        if (contacts && this._contactCache) {
+          this._contactCache.loadContacts(contacts);
+        }
+      } catch (_) {}
+    }
   }
 
   get client() {
@@ -277,6 +272,7 @@ class WhatsAppService extends EventEmitter {
       try {
         const chatsRaw = await this.withClient("getChats", () => this.client.getChats());
         if (!Array.isArray(chatsRaw)) return [];
+        if (this._contactCache) this._contactCache.loadChats(chatsRaw);
         return chatsRaw.slice(0, limit).map((c) => ({
           id: c.id?._serialized || c.id || "",
           name: c.name || c.formattedTitle || "",
@@ -286,7 +282,13 @@ class WhatsAppService extends EventEmitter {
           archived: !!c.archived,
           pinned: !!c.pinned,
           isMuted: !!c.isMuted,
-          lastMessage: c.lastMessage ? messageSummary(c.lastMessage) : null,
+          lastMessage: c.lastMessage
+            ? messageSummary(c.lastMessage, {
+                contactCache: this._contactCache,
+                chat: c,
+                myNumber: this.account?.number,
+              })
+            : null,
         }));
       } catch (err) {
         if (this.isFrameError(err)) {
@@ -305,6 +307,7 @@ class WhatsAppService extends EventEmitter {
       try {
         const contacts = await this.withClient("getContacts", () => this.client.getContacts());
         if (!contacts) return [];
+        if (this._contactCache) this._contactCache.loadContacts(contacts);
         const all = contacts.map((c) => ({
           id: c.id._serialized,
           name: c.name || c.pushname || "",
@@ -329,8 +332,15 @@ class WhatsAppService extends EventEmitter {
     try {
       const chat = await this.withClient("getHistory", () => this.client.getChatById(chatId));
       if (!chat || typeof chat.fetchMessages !== "function") return [];
+      if (this._contactCache) this._contactCache.setChat(chat);
       const messages = await chat.fetchMessages({ limit });
-      return messages.map((m) => messageSummary(m));
+      return messages.map((m) =>
+        messageSummary(m, {
+          contactCache: this._contactCache,
+          chat,
+          myNumber: this.account?.number,
+        })
+      );
     } catch (err) {
       if (this.isFrameError(err)) {
         this.lastError = "getHistory failed: WhatsApp page reloaded — reconnecting";
