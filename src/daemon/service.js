@@ -457,7 +457,7 @@ class WhatsAppService extends EventEmitter {
     if (this.state !== STATE.READY) return fail("NOT_READY", "WhatsApp daemon is not ready yet.");
 
     const { findCachedMedia, saveIncomingMedia } = require("../media/store");
-    const existing = findCachedMedia(messageId, outputDir);
+    const existing = findCachedMedia(messageId, outputDir, { purgeCorrupt: true });
     if (existing && (!filename || existing.filename === filename)) {
       return ok({
         messageId,
@@ -465,6 +465,7 @@ class WhatsAppService extends EventEmitter {
         filename: existing.filename,
         mimetype: existing.mimetype,
         size: existing.size,
+        sha256: existing.sha256 || null,
         caption: existing.caption || "",
         cached: true,
       });
@@ -574,6 +575,32 @@ class WhatsAppService extends EventEmitter {
 
     mediaList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     return mediaList.slice(0, targetLimit);
+  }
+
+  async getMediaStats({ customDir } = {}) {
+    const { getMediaStorageStats } = require("../media/store");
+    try {
+      const stats = getMediaStorageStats(customDir);
+      return ok({ stats });
+    } catch (err) {
+      return fail("MEDIA_STATS_FAILED", err.message || String(err));
+    }
+  }
+
+  async cleanMedia({ olderThanDays, maxStorageMb, dryRun, apply, customDir } = {}) {
+    const { cleanMediaStorage } = require("../media/store");
+    try {
+      const result = cleanMediaStorage({
+        olderThanDays,
+        maxStorageMb,
+        dryRun,
+        apply,
+        customDir,
+      });
+      return ok({ result });
+    } catch (err) {
+      return fail("MEDIA_CLEAN_FAILED", err.message || String(err));
+    }
   }
 
   subscribe(cb) {

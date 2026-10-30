@@ -546,11 +546,135 @@ async function cmdAutostart(argv) {
   }
 }
 
+async function cmdMediaStats(argv) {
+  let stats;
+  try {
+    const { base, token } = await getDaemon();
+    const res = await request(base, token, "GET", ROUTES.MEDIA_STATS);
+    if (res.ok && res.stats) {
+      stats = res.stats;
+    }
+  } catch (_) {}
+
+  if (!stats) {
+    const { getMediaStorageStats } = require("../media/store");
+    stats = getMediaStorageStats();
+  }
+
+  console.log(`${pc.bold("───────────────")}`);
+  console.log(`${pc.bold("Media Storage Statistics")}`);
+  console.log(`${pc.bold("───────────────")}`);
+  console.log(`Directory:     ${pc.cyan(stats.mediaDir)}`);
+  console.log(`Total Files:   ${pc.bold(stats.totalFiles)} (${pc.green(stats.totalFormatted)})`);
+  if (stats.pinnedFiles > 0) {
+    console.log(`Pinned Files:  ${pc.yellow(stats.pinnedFiles)} (${pc.yellow(stats.pinnedFormatted)})`);
+  }
+
+  console.log(`\n${pc.bold("▸ Breakdown by Category:")}`);
+  console.log(`  Images:    ${String(stats.categories.images.count).padStart(3)} files  (${stats.categories.images.formatted})`);
+  console.log(`  Documents: ${String(stats.categories.documents.count).padStart(3)} files  (${stats.categories.documents.formatted})`);
+  console.log(`  Audio:     ${String(stats.categories.audio.count).padStart(3)} files  (${stats.categories.audio.formatted})`);
+  console.log(`  Videos:    ${String(stats.categories.videos.count).padStart(3)} files  (${stats.categories.videos.formatted})`);
+  if (stats.categories.other.count > 0) {
+    console.log(`  Other:     ${String(stats.categories.other.count).padStart(3)} files  (${stats.categories.other.formatted})`);
+  }
+
+  console.log(`\n${pc.bold("▸ File Age:")}`);
+  if (stats.newestFile) {
+    console.log(`  Newest:    ${stats.newestFile.filename} (${stats.newestFile.ageDays} days ago, ${stats.newestFile.formatted})`);
+  } else {
+    console.log(`  Newest:    ${pc.dim("none")}`);
+  }
+  if (stats.oldestFile) {
+    console.log(`  Oldest:    ${stats.oldestFile.filename} (${stats.oldestFile.ageDays} days ago, ${stats.oldestFile.formatted})`);
+  } else {
+    console.log(`  Oldest:    ${pc.dim("none")}`);
+  }
+
+  console.log(`\n${pc.bold("▸ Cache & Integrity:")}`);
+  console.log(`  Index Entries: ${stats.cache.totalEntries}`);
+  console.log(`  Verified Disk: ${stats.cache.verifiedFiles}`);
+  if (stats.cache.missingFiles > 0) {
+    console.log(`  Missing:       ${pc.yellow(stats.cache.missingFiles)}`);
+  }
+  if (stats.cache.corruptedFiles > 0) {
+    console.log(`  Corrupted:     ${pc.red(stats.cache.corruptedFiles)}`);
+  }
+}
+
+async function cmdMediaClean(argv) {
+  const flags = argv.flags || {};
+  const olderThanDays = flags["older-than"] ? parseInt(flags["older-than"], 10) : undefined;
+  const maxStorageMb = flags["max-size"] ? parseInt(flags["max-size"], 10) : undefined;
+  const isApply = Boolean(flags.apply || flags.force);
+  const dryRun = isApply ? false : flags["dry-run"] !== false;
+
+  let cleanResult;
+  try {
+    const { base, token } = await getDaemon();
+    const res = await request(base, token, "POST", ROUTES.MEDIA_CLEAN, {
+      olderThanDays,
+      maxStorageMb,
+      dryRun,
+      apply: isApply,
+    });
+    if (res.ok && res.result) {
+      cleanResult = res.result;
+    }
+  } catch (_) {}
+
+  if (!cleanResult) {
+    const { cleanMediaStorage } = require("../media/store");
+    cleanResult = cleanMediaStorage({
+      olderThanDays,
+      maxStorageMb,
+      dryRun,
+      apply: isApply,
+    });
+  }
+
+  console.log(`${pc.bold("───────────────")}`);
+  console.log(`${pc.bold("Media Retention & Cleanup")}`);
+  console.log(`${pc.bold("───────────────")}`);
+
+  if (cleanResult.dryRun) {
+    console.log(`${pc.yellow("[DRY RUN]")} ${pc.dim("No files were deleted. Pass --apply to execute deletion.")}`);
+  } else {
+    console.log(`${pc.green("✓ [CLEANUP APPLIED]")} Files were deleted from disk and index updated.`);
+  }
+
+  console.log(`Eligible files: ${pc.bold(cleanResult.deletedCount)} (${cleanResult.deletedFormatted})`);
+  console.log(`Remaining disk: ${pc.bold(cleanResult.remainingFiles)} files (${cleanResult.remainingFormatted})`);
+  if (cleanResult.skippedPinnedCount > 0) {
+    console.log(`Pinned (exempt): ${pc.yellow(cleanResult.skippedPinnedCount)} files protected`);
+  }
+
+  if (cleanResult.files && cleanResult.files.length > 0) {
+    console.log(`\n${pc.bold(cleanResult.dryRun ? "Files to be pruned:" : "Pruned files:")}`);
+    for (const f of cleanResult.files.slice(0, 10)) {
+      console.log(`  • ${f.filename} (${f.formatted}, ${f.ageDays} days old)`);
+    }
+    if (cleanResult.files.length > 10) {
+      console.log(`  ${pc.dim(`... and ${cleanResult.files.length - 10} more files`)}`);
+    }
+  } else {
+    console.log(`\n${pc.dim("No media files match the cleanup criteria.")}`);
+  }
+}
+
 async function cmdMedia(argv) {
+  const sub = argv && argv.positional && argv.positional[0];
+  if (sub === "stats") {
+    return cmdMediaStats(argv);
+  }
+  if (sub === "clean") {
+    return cmdMediaClean(argv);
+  }
+
   const { base, token } = await getDaemon();
   const limit = argv.flags.limit || "20";
   const type = argv.flags.type || "all";
-  const chat = argv.flags.chat || argv.positional[0] || null;
+  const chat = argv.flags.chat || (sub !== "stats" && sub !== "clean" ? sub : null);
 
   let chatId = undefined;
   if (chat) {

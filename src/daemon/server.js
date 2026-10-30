@@ -66,6 +66,12 @@ class DaemonServer {
     if (pathname === ROUTES.RECENT_MEDIA && method === "GET") {
       return this.handleRecentMedia(req, res);
     }
+    if (pathname === ROUTES.MEDIA_STATS && method === "GET") {
+      return this.handleMediaStats(req, res);
+    }
+    if (pathname === ROUTES.MEDIA_CLEAN && method === "POST") {
+      return this.withBody(req, res, (body) => this.handleMediaClean(res, body));
+    }
     if (pathname === ROUTES.CHATS && method === "GET") {
       return this.handleChats(req, res);
     }
@@ -179,6 +185,25 @@ class DaemonServer {
     const sinceTimestamp = qs.get("sinceTimestamp") ? parseInt(qs.get("sinceTimestamp"), 10) : undefined;
     const result = await this.service.getRecentMedia({ chatId, type, limit, sinceTimestamp });
     return this.json(res, 200, ok({ count: result.length, media: result }));
+  }
+
+  async handleMediaStats(req, res) {
+    const qs = new URL(req.url, "http://x").searchParams;
+    const customDir = qs.get("dir") || null;
+    const result = await this.service.getMediaStats({ customDir });
+    return this.json(res, result.ok ? 200 : 500, result);
+  }
+
+  async handleMediaClean(res, body) {
+    const { olderThanDays, maxStorageMb, dryRun, apply, customDir } = body || {};
+    const result = await this.service.cleanMedia({
+      olderThanDays: olderThanDays !== undefined ? Number(olderThanDays) : undefined,
+      maxStorageMb: maxStorageMb !== undefined ? Number(maxStorageMb) : undefined,
+      dryRun,
+      apply,
+      customDir,
+    });
+    return this.json(res, result.ok ? 200 : 500, result);
   }
 
   async handleChats(req, res) {
