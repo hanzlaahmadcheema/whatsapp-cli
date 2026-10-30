@@ -191,7 +191,26 @@ For complete tool schemas, input constraints, and return formats, see [MCP Tools
 
 ## Connecting AI Agents
 
-Connect WhatsApp to any compatible agent in seconds:
+### 🤖 Autonomous Setup Prompt for AI Agents
+
+You can have your AI assistant (Cursor, Claude Code, OpenBot, Google Antigravity, Windsurf, Roo Code) configure this integration end-to-end. Copy and paste this prompt into your agent:
+
+```text
+Please set up the WhatsApp CLI and Model Context Protocol (MCP) server for our environment:
+1. Clone https://github.com/hanzlaahmadcheema/whatsapp-cli.git if not already present.
+2. In the repository directory, run `npm install` (which automatically runs the wwebjs patch) and `npm link` so `wa` is globally available.
+3. Add the WhatsApp MCP server to our agent MCP configuration:
+   - command: "wa" (or "node <path-to-whatsapp-cli>/src/mcp/index.js")
+   - args: ["mcp"]
+4. If this agent supports skills, copy `skills/whatsapp/` to our skills directory (or import `skills/whatsapp/SKILL.md` into workspace instructions).
+5. Guide me to run `wa login` in a visible terminal so I can scan the QR code with WhatsApp on my phone.
+6. Once I confirm linking, verify the connection safely by calling the `whatsapp_get_status` tool (confirm state is "ready"). Do NOT send any test messages.
+7. Confirm that all 9 WhatsApp tools are registered and ready for use.
+```
+
+---
+
+### Manual Configuration Snippets
 
 ### Claude Desktop (`claude_desktop_config.json`)
 ```json

@@ -49,6 +49,25 @@ The WhatsApp CLI MCP server uses standard I/O (`stdio`) JSON-RPC communication a
 
 ---
 
+## Autonomous Setup Prompt for AI Agents
+
+If you are pairing with an AI agent (Cursor, Claude Code, OpenBot, Google Antigravity, Windsurf, Roo Code), you can give it the following prompt to autonomously configure WhatsApp CLI and its MCP tools:
+
+```text
+Please set up the WhatsApp CLI and Model Context Protocol (MCP) server for our environment:
+1. Clone https://github.com/hanzlaahmadcheema/whatsapp-cli.git if not already present.
+2. In the repository directory, run `npm install` (which automatically runs the wwebjs patch) and `npm link` so `wa` is globally available.
+3. Add the WhatsApp MCP server to our agent MCP configuration:
+   - command: "wa" (or "node <path-to-whatsapp-cli>/src/mcp/index.js")
+   - args: ["mcp"]
+4. If this agent supports skills, copy `skills/whatsapp/` to our skills directory (or import `skills/whatsapp/SKILL.md` into workspace instructions).
+5. Guide me to run `wa login` in a visible terminal so I can scan the QR code with WhatsApp on my phone.
+6. Once I confirm linking, verify the connection safely by calling the `whatsapp_get_status` tool (confirm state is "ready"). Do NOT send any test messages.
+7. Confirm that all 9 WhatsApp tools are registered and ready for use.
+```
+
+---
+
 ## Pre-flight Checklist
 
 Before configuring your agent:
