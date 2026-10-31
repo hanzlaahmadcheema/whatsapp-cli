@@ -107,7 +107,17 @@ class DaemonServer {
   }
 
   authorize(req) {
-    return req.headers[TOKEN_HEADER] === this.token;
+    if (req.headers[TOKEN_HEADER] === this.token) {
+      return true;
+    }
+    const auth = req.headers["authorization"];
+    if (typeof auth === "string") {
+      const match = auth.match(/^Bearer\s+(.+)$/i);
+      if (match && match[1].trim() === this.token) {
+        return true;
+      }
+    }
+    return false;
   }
 
   statusPayload() {

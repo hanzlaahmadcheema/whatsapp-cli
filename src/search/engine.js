@@ -100,7 +100,10 @@ async function searchWhatsApp(options = {}, context = {}) {
       return t === "image" || mimeStr.startsWith("image/");
     }
     if (typeFilter === "document" || typeFilter === "doc") {
-      return t === "document" || (mimeStr && !mimeStr.startsWith("image/") && !mimeStr.startsWith("audio/") && !mimeStr.startsWith("video/"));
+      if (mimeStr) {
+        return !mimeStr.startsWith("image/") && !mimeStr.startsWith("audio/") && !mimeStr.startsWith("video/");
+      }
+      return t === "document" || t === "doc";
     }
     if (typeFilter === "video") {
       return t === "video" || mimeStr.startsWith("video/");
@@ -131,7 +134,16 @@ async function searchWhatsApp(options = {}, context = {}) {
     for (const [mid, item] of Object.entries(mediaIndex)) {
       if (!matchesTimestamp(item.timestamp)) continue;
       if (!matchesChat(item.chatId)) continue;
-      if (!matchesType(item.mimetype && item.mimetype.startsWith("image/") ? "image" : "document", item.mimetype)) {
+      let mediaType = "document";
+      const mime = item.mimetype || "";
+      if (mime.startsWith("image/")) {
+        mediaType = "image";
+      } else if (mime.startsWith("video/")) {
+        mediaType = "video";
+      } else if (mime.startsWith("audio/")) {
+        mediaType = "audio";
+      }
+      if (!matchesType(mediaType, mime)) {
         continue;
       }
 
@@ -154,6 +166,7 @@ async function searchWhatsApp(options = {}, context = {}) {
         caption: item.caption || null,
         content: item.filename || item.caption || "",
         metadata: {
+          type: mediaType,
           mimetype: item.mimetype,
           size: item.size,
           sha256: item.sha256,
@@ -290,6 +303,8 @@ async function searchWhatsApp(options = {}, context = {}) {
         caption: m.caption || null,
         content: m.body || m.caption || m.filename || "",
         metadata: {
+          type: m.type || (m.hasMedia ? "media" : "chat"),
+          mimetype: m.mimetype || null,
           isGroup: Boolean(m.isGroup),
           fromMe: Boolean(m.fromMe),
           hasMedia: Boolean(m.hasMedia),
