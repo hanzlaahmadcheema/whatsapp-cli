@@ -96,10 +96,293 @@ function createEventPayload({
           number: account.number || null,
           name: account.name || null,
           jid: account.jid || null,
+          lid: account.lid || null,
         }
       : null,
     data,
   };
+}
+
+/**
+ * Set of webhook event types that are strictly excluded from queue delivery.
+ * Per specification: delivery receipts, read receipts, session/connection state,
+ * edits/revocations, and outgoing messages must never reach the persistent queue.
+ */
+const EXCLUDED_WEBHOOK_EVENTS = new Set([
+  "message.sent",
+  "message.ack",
+  "message.updated",
+  "session.state",
+  "session.qr",
+]);
+
+/**
+ * Checks whether an incoming message or broadcast event originated from or targets
+ * a WhatsApp Channel (Newsletter), broadcast channel, or status broadcast.
+ *
+ * @param {object} summary - Message summary or raw event
+ * @returns {boolean} True if identified as Channel or Broadcast
+ */
+function isChannelOrBroadcast(summary) {
+  if (!summary || typeof summary !== "object") return false;
+
+  // 1. Explicit boolean or type flags
+  if (Boolean(summary.isNewsletter || summary._data?.isNewsletter)) return true;
+  if (Boolean(summary.broadcast || summary._data?.broadcast)) return true;
+  if (Boolean(summary.isStatus || summary.isStatusV3 || summary._data?.isStatusV3)) return true;
+  if (summary.server === "newsletter" || summary._data?.server === "newsletter") return true;
+  if (summary.type === "newsletter_notification") return true;
+
+  // 2. Check JID fields for @newsletter or @broadcast
+  const fieldsToCheck = [
+    summary.chatId,
+    summary.from,
+    summary.to,
+    summary.author,
+    typeof summary.id === "object" ? summary.id?.remote : summary.id,
+    summary._data?.id?.remote,
+    summary.reaction?.parentMsgKey?.remote,
+  ];
+
+  for (const field of fieldsToCheck) {
+    if (typeof field === "string") {
+      const lower = field.toLowerCase();
+      if (lower.includes("@newsletter") || lower.endsWith("@newsletter")) return true;
+      if (lower.includes("@broadcast") || lower.endsWith("@broadcast") || lower === "status@broadcast") return true;
+    }
+  }
+
+  // 3. Channel reactions: reaction where parent or target chat is newsletter
+  if (summary.type === "reaction" && summary.reaction && typeof summary.reaction === "object") {
+    const targetChat =
+      summary.reaction.chatId ||
+      summary.reaction.msgKey?.remote ||
+      summary.reaction.parentMsgKey?.remote;
+    if (typeof targetChat === "string" && targetChat.toLowerCase().includes("@newsletter")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Resolves all identifier forms for the authenticated WhatsApp account.
+ *
+ * @param {object} accountInfo - Account object
+ * @returns {{ ids: Set<string>, numbers: Set<string> }} Sets of normalized IDs and numbers
+ */
+function getAccountIdentifiers(accountInfo) {
+  const ids = new Set();
+  const numbers = new Set();
+
+  if (!accountInfo) return { ids, numbers };
+
+  const addVal = (val) => {
+    if (!val || typeof val !== "string") return;
+    const trimmed = val.trim();
+    if (!trimmed) return;
+    ids.add(trimmed.toLowerCase());
+
+    // Extract user/phone number if present
+    const userPart = trimmed.split("@")[0].split(":")[0];
+    if (userPart && /^\d+$/.test(userPart)) {
+      numbers.add(userPart);
+      ids.add(`${userPart}@c.us`);
+      ids.add(`${userPart}@s.whatsapp.net`);
+    } else if (/^\d+$/.test(trimmed)) {
+      numbers.add(trimmed);
+      ids.add(`${trimmed}@c.us`);
+      ids.add(`${trimmed}@s.whatsapp.net`);
+    }
+  };
+
+  addVal(accountInfo.number);
+  addVal(accountInfo.phone);
+  addVal(accountInfo.jid);
+  addVal(accountInfo.me);
+  addVal(accountInfo.lid);
+
+  if (accountInfo.wid) {
+    if (typeof accountInfo.wid === "object") {
+      addVal(accountInfo.wid.user);
+      addVal(accountInfo.wid._serialized);
+      addVal(accountInfo.wid.lid);
+    } else if (typeof accountInfo.wid === "string") {
+      addVal(accountInfo.wid);
+    }
+  }
+
+  return { ids, numbers };
+}
+
+/**
+ * Checks whether the authenticated account is explicitly mentioned in structured mentions.
+ *
+ * @param {Array<string|object>} mentions - Structured mention list from WhatsApp metadata
+ * @param {object} accountInfo - Authenticated account info
+ * @returns {boolean} True if authenticated account is explicitly mentioned
+ */
+function isAccountMentioned(mentions, accountInfo) {
+  if (!Array.isArray(mentions) || mentions.length === 0) return false;
+  const { ids, numbers } = getAccountIdentifiers(accountInfo);
+  if (ids.size === 0 && numbers.size === 0) return false;
+
+  for (const m of mentions) {
+    if (!m) continue;
+    const raw = typeof m === "object" ? (m._serialized || m.user || m.id || String(m)) : String(m);
+    const cleaned = raw.trim().toLowerCase();
+    if (!cleaned) continue;
+
+    // 1. Direct ID / JID / LID match
+    if (ids.has(cleaned)) return true;
+
+    // 2. Base JID match (without device suffix, e.g. 923124706501:1@c.us -> 923124706501@c.us)
+    const baseJid = cleaned.replace(/:[0-9]+@/, "@");
+    if (ids.has(baseJid)) return true;
+
+    // 3. User / phone number match
+    const userPart = cleaned.split("@")[0].split(":")[0];
+    if (userPart && numbers.has(userPart)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Centralized eligibility filter for incoming WhatsApp messages.
+ * Evaluates whether a message qualifies to reach the persistent webhook queue.
+ *
+ * Requirements:
+ * 1. Personal Chats: Dispatch every new incoming message in 1:1 conversations.
+ *    Supports all message types (text, images, documents, audio/ptt, video, stickers).
+ *    Never dispatch outgoing messages.
+ * 2. Group Chats: Dispatch ONLY when the authenticated account is explicitly mentioned
+ *    using structured WhatsApp mention metadata.
+ * 3. Channels / Broadcasts: Never dispatch.
+ *
+ * @param {object} summary - Message summary or raw event
+ * @param {object} [accountInfo] - Authenticated account info
+ * @returns {boolean} True if message qualifies for delivery
+ */
+function isIncomingMessageEligible(summary, accountInfo) {
+  if (!summary || typeof summary !== "object") return false;
+
+  // 1. Never dispatch outgoing messages
+  const isFromMe = Boolean(
+    summary.fromMe ||
+    summary.from === "me" ||
+    (summary.id && typeof summary.id === "object" && summary.id.fromMe)
+  );
+  if (isFromMe) return false;
+
+  // 2. Never dispatch WhatsApp Channels, channel posts, channel reactions, or broadcasts
+  if (isChannelOrBroadcast(summary)) return false;
+
+  // 3. Determine if group message
+  const remoteId = summary.chatId || summary.from || (typeof summary.id === "object" ? summary.id?.remote : null);
+  const isGroup = Boolean(
+    summary.isGroup ||
+    (typeof remoteId === "string" && remoteId.endsWith("@g.us")) ||
+    (summary.author && !isFromMe)
+  );
+
+  // 4. Group Chat filtering: Must explicitly mention the bot account
+  if (isGroup) {
+    const rawMentions =
+      summary.mentionedJidList ||
+      summary.mentionedIds ||
+      summary.mentions ||
+      (summary._data && summary._data.mentionedJidList) ||
+      [];
+    const mentions = Array.isArray(rawMentions)
+      ? rawMentions.map((item) =>
+          typeof item === "object" && item !== null
+            ? (item._serialized || item.user || String(item))
+            : String(item)
+        )
+      : [];
+
+    return isAccountMentioned(mentions, accountInfo);
+  }
+
+  // 5. Personal Chat (1:1): Allow all incoming message types
+  return true;
+}
+
+/**
+ * Centralized event eligibility filter before queue insertion.
+ * Ensures excluded events never reach the webhook queue, even if subscribed to '*'.
+ *
+ * @param {string} eventType - The webhook event type
+ * @param {object} payload - The event payload
+ * @param {object} [accountInfo] - Authenticated account info
+ * @returns {boolean} True if event is eligible to be enqueued
+ */
+function isEventEligible(eventType, payload, accountInfo) {
+  // 1. Manual test/ping events are explicitly preserved
+  if (eventType === "webhook.test") {
+    return true;
+  }
+
+  // 2. Excluded events are strictly rejected
+  if (EXCLUDED_WEBHOOK_EVENTS.has(eventType)) {
+    return false;
+  }
+
+  // 3. Message and media received events must pass message eligibility
+  if (eventType === "message.received" || eventType === "media.received") {
+    const data = payload?.data;
+    if (!data) return false;
+    return isIncomingMessageEligible(data, accountInfo);
+  }
+
+  // 4. Default: reject unknown / unapproved event types
+  return false;
+}
+
+/**
+ * Resolves account info dynamically from bridge options, active service, or state store.
+ *
+ * @param {object} bridge - WebhookBridge instance
+ * @param {object} [options] - Ingestion options
+ * @returns {object|null} Resolved account info
+ */
+function resolveAccountInfo(bridge, options = {}) {
+  const merged = Object.assign(
+    {},
+    bridge?.account || {},
+    bridge?.service?.account || {},
+    options && options.account ? options.account : {}
+  );
+  if (merged.number || merged.jid || merged.me || merged.lid) {
+    return merged;
+  }
+  const clientInfo =
+    bridge?.service?.client?.info ||
+    bridge?.service?.controller?.client?.client?.info ||
+    bridge?.service?.controller?.client?.info;
+  if (clientInfo) {
+    const widUser = clientInfo.wid?.user || clientInfo.me?.user;
+    const widSerialized = clientInfo.wid?._serialized || clientInfo.me?._serialized;
+    const lidSerialized = clientInfo.lid?._serialized;
+    if (widUser || widSerialized || lidSerialized) {
+      return {
+        number: widUser || (widSerialized ? widSerialized.split("@")[0].split(":")[0] : null),
+        jid: widSerialized || (widUser ? `${widUser}@c.us` : null),
+        me: widSerialized || (widUser ? `${widUser}@c.us` : null),
+        lid: lidSerialized || null,
+        name: clientInfo.pushname || clientInfo.name || null,
+      };
+    }
+  }
+  try {
+    const state = require("../store/state").get();
+    if (state?.account) {
+      return state.account;
+    }
+  } catch (_) {}
+  return null;
 }
 
 /**
@@ -306,20 +589,20 @@ class WebhookBridge {
       return;
     }
 
-    // 2. Session state events
+    // 2. Session state events: update internal bridge state but never enqueue
     if (type === "state" || type === "logged_out") {
       const state = type === "logged_out" ? "logged_out" : rawEvent.state;
       this.ingestState(state, this.lastState, rawEvent.reason || null);
       return;
     }
 
-    // 3. Explicit message.ack event
+    // 3. Message ACK: ignored per strict filtering specification
     if (type === "message_ack" || type === "message.ack") {
       this.ingestAck(rawEvent);
       return;
     }
 
-    // 4. Explicit message.updated event
+    // 4. Message Updated: ignored per strict filtering specification
     if (type === "message_updated" || type === "message.updated") {
       this.ingestUpdate(rawEvent);
       return;
@@ -327,13 +610,25 @@ class WebhookBridge {
   }
 
   /**
-   * Ingests and maps an enriched message into message.received, message.sent, and media.received.
+   * Ingests and maps a qualifying incoming WhatsApp message into message.received and media.received.
+   * Strictly filters out outgoing messages, channels, broadcasts, and unmentioned group messages.
    */
   ingestMessage(summary, options = {}) {
-    if (!summary || !summary.id) return;
-    const messageId = summary.id;
-    const isFromMe = Boolean(summary.fromMe || summary.from === "me");
-    const eventType = isFromMe ? "message.sent" : "message.received";
+    if (!summary || typeof summary !== "object") return;
+    const messageId =
+      typeof summary.id === "object" && summary.id !== null
+        ? summary.id._serialized || summary.id.id
+        : summary.id;
+    if (!messageId) return;
+
+    const accountInfo = resolveAccountInfo(this, options);
+
+    // Centralized eligibility filter before queue insertion
+    if (!isIncomingMessageEligible(summary, accountInfo)) {
+      return;
+    }
+
+    const eventType = "message.received";
     const dedupKey = `${eventType}:${messageId}`;
 
     if (this.isDuplicate(dedupKey)) {
@@ -342,21 +637,35 @@ class WebhookBridge {
     this.markSeen(dedupKey);
 
     const timestamp = summary.timestamp || Math.floor(Date.now() / 1000);
-    const accountInfo = options.account || this.service?.account || this.account;
 
-    // Build common message data structure
+    // Extract structured mentions
+    const rawMentions =
+      summary.mentionedJidList ||
+      summary.mentionedIds ||
+      summary.mentions ||
+      (summary._data && summary._data.mentionedJidList) ||
+      [];
+    const mentionedJidList = Array.isArray(rawMentions)
+      ? rawMentions.map((item) =>
+          typeof item === "object" && item !== null
+            ? (item._serialized || item.user || item.id || String(item))
+            : String(item)
+        )
+      : [];
+
+    // Build common message data structure preserving full metadata
     const messageData = {
       messageId,
-      chatId: summary.chatId || (isFromMe ? summary.to : summary.from) || null,
+      chatId: summary.chatId || summary.from || null,
       chatName: summary.chatName || null,
-      from: summary.from || (isFromMe ? "me" : null),
+      from: summary.from || null,
       to: summary.to || null,
       author: summary.author || null,
       senderName: summary.senderName || null,
       body: summary.body || "",
       timestamp,
       isGroup: Boolean(summary.isGroup),
-      fromMe: isFromMe,
+      fromMe: false,
       hasMedia: Boolean(summary.hasMedia),
       type: summary.type || (summary.hasMedia ? "media" : "chat"),
       media: summary.hasMedia
@@ -367,12 +676,13 @@ class WebhookBridge {
             caption: summary.caption || "",
           }
         : null,
-      hasQuotedMsg: Boolean(summary.hasQuotedMsg),
+      hasQuotedMsg: Boolean(summary.hasQuotedMsg || summary.quotedMsg),
       quotedMsg: summary.quotedMsg || null,
+      mentionedJidList,
     };
 
-    // 1. Dispatch message.received or message.sent
-    const eventId = isFromMe ? `evt_snt_${messageId}` : `evt_rcv_${messageId}`;
+    // 1. Dispatch message.received
+    const eventId = `evt_rcv_${messageId}`;
     const payload = createEventPayload({
       event: eventType,
       data: messageData,
@@ -383,8 +693,8 @@ class WebhookBridge {
 
     this.dispatchToSubscribers(eventType, payload);
 
-    // 2. If message contains media, also trigger media.received
-    if (summary.hasMedia && !isFromMe) {
+    // 2. If qualifying incoming message contains media, also trigger media.received
+    if (summary.hasMedia) {
       const mediaDedupKey = `media.received:${messageId}`;
       if (!this.isDuplicate(mediaDedupKey)) {
         this.markSeen(mediaDedupKey);
@@ -405,6 +715,9 @@ class WebhookBridge {
             filesize: summary.filesize || null,
             hasMedia: true,
           },
+          hasQuotedMsg: messageData.hasQuotedMsg,
+          quotedMsg: messageData.quotedMsg,
+          mentionedJidList,
         };
 
         const mediaPayload = createEventPayload({
@@ -421,102 +734,46 @@ class WebhookBridge {
   }
 
   /**
-   * Ingests session state changes (ready, connecting, syncing, logged_out, error).
+   * Ingests session state changes. Updates bridge state; excluded from webhook queue.
    */
   ingestState(state, previousState = null, details = null) {
     if (!state) return;
-    // Suppress duplicate state emissions (especially across transient polling or reconnect loops)
     if (this.lastState === state) {
       return;
     }
-    const oldState = previousState || this.lastState;
     this.lastState = state;
-
-    const timestamp = Math.floor(Date.now() / 1000);
-    const eventId = `evt_sta_${state}_${timestamp}`;
-
-    const payload = createEventPayload({
-      event: "session.state",
-      data: {
-        state,
-        previousState: oldState || null,
-        timestamp,
-        details: details || null,
-      },
-      account: this.service?.account || this.account,
-      eventId,
-      timestamp,
-    });
-
-    this.dispatchToSubscribers("session.state", payload);
+    // Excluded from webhook delivery queue per strict filtering specification
   }
 
   /**
-   * Ingests message ACK (sent, delivered, read, played).
+   * Ingests message ACK (sent, delivered, read, played). Excluded from webhook queue.
    */
   ingestAck(params = {}) {
-    const { messageId, chatId, ack, timestamp } = params;
-    if (!messageId || ack === undefined || ack === null) return;
-
-    const dedupKey = `message.ack:${messageId}:${ack}`;
-    if (this.isDuplicate(dedupKey)) {
-      return;
-    }
-    this.markSeen(dedupKey);
-
-    const ts = timestamp || Math.floor(Date.now() / 1000);
-    const eventId = `evt_ack_${messageId}_${ack}`;
-
-    const payload = createEventPayload({
-      event: "message.ack",
-      data: {
-        messageId,
-        chatId: chatId || null,
-        ack: Number(ack),
-        ackName: ackToName(ack),
-        timestamp: ts,
-      },
-      account: this.service?.account || this.account,
-      eventId,
-      timestamp: ts,
-    });
-
-    this.dispatchToSubscribers("message.ack", payload);
+    // Excluded from webhook delivery queue per strict filtering specification
   }
 
   /**
-   * Ingests message edits and revokes.
+   * Ingests message edits and revokes. Excluded from webhook queue.
    */
   ingestUpdate(params = {}) {
-    const { messageId, chatId, updateType = "update", body = null, timestamp } = params;
-    if (!messageId) return;
-
-    const ts = timestamp || Math.floor(Date.now() / 1000);
-    const eventId = `evt_upd_${messageId}_${ts}`;
-
-    const payload = createEventPayload({
-      event: "message.updated",
-      data: {
-        messageId,
-        chatId: chatId || null,
-        updateType,
-        body,
-        timestamp: ts,
-      },
-      account: this.service?.account || this.account,
-      eventId,
-      timestamp: ts,
-    });
-
-    this.dispatchToSubscribers("message.updated", payload);
+    // Excluded from webhook delivery queue per strict filtering specification
   }
 
   /**
    * Dispatches an event payload to all matching, enabled endpoints.
+   * Strictly enforces event eligibility before queue insertion.
    * Applies endpoint-specific privacy settings and enqueues asynchronously.
    */
   dispatchToSubscribers(eventType, payload) {
     if (!this.queue) return;
+
+    // Centralized eligibility check before queue insertion:
+    // Excluded events (session.state, message.ack, message.updated, message.sent, etc.)
+    // are rejected even when an endpoint subscribes to "*"
+    const accountInfo = resolveAccountInfo(this, { account: payload?.account });
+    if (!isEventEligible(eventType, payload, accountInfo)) {
+      return;
+    }
 
     let endpoints = [];
     try {
@@ -579,5 +836,11 @@ module.exports = {
   ackToName,
   applyPrivacyFilter,
   createEventPayload,
+  isChannelOrBroadcast,
+  getAccountIdentifiers,
+  isAccountMentioned,
+  isIncomingMessageEligible,
+  isEventEligible,
+  resolveAccountInfo,
   WebhookBridge,
 };

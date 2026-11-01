@@ -202,8 +202,9 @@ test("WebhookBridge maps incoming messages, outgoing messages, and media.receive
     });
 
     const deliveries = queue.listDeliveries().deliveries;
-    // Expected: message.received (001), message.sent (002), message.received (003), media.received (003) = 4 deliveries
-    assert.equal(deliveries.length, 4);
+    // Expected: message.received (001), message.received (003), media.received (003) = 3 deliveries
+    // Outgoing messages (msg_outgoing_002) are strictly excluded from queue delivery
+    assert.equal(deliveries.length, 3);
 
     // Verify incoming text event
     const rcvDelivery = deliveries.find((d) => d.eventId === "evt_rcv_msg_incoming_001");
@@ -214,13 +215,9 @@ test("WebhookBridge maps incoming messages, outgoing messages, and media.receive
     assert.equal(rcvDelivery.payload.data.body, "Hello from WhatsApp");
     assert.equal(rcvDelivery.payload.account.number, "15551234567");
 
-    // Verify outgoing text event
-    const sntDelivery = deliveries.find((d) => d.eventId === "evt_snt_msg_outgoing_002");
-    assert.ok(sntDelivery);
-    assert.equal(sntDelivery.eventType, "message.sent");
-    assert.equal(sntDelivery.payload.data.messageId, "msg_outgoing_002");
-    assert.equal(sntDelivery.payload.data.fromMe, true);
-    assert.equal(sntDelivery.payload.data.body, "Reply to John");
+    // Verify outgoing text event was strictly filtered and never enqueued
+    const sntDelivery = deliveries.find((d) => d.payload?.data?.messageId === "msg_outgoing_002");
+    assert.equal(sntDelivery, undefined);
 
     // Verify media.received event
     const medDelivery = deliveries.find((d) => d.eventId === "evt_med_msg_media_003");
@@ -283,29 +280,10 @@ test("WebhookBridge maps message.ack, message.updated, and session.state with st
     bridge.ingestState("ready", "connecting", "Daemon handshake confirmed");
 
     const deliveries = queue.listDeliveries().deliveries;
-    assert.equal(deliveries.length, 3);
-
-    // Verify ACK delivery
-    const ackDelivery = deliveries.find((d) => d.eventType === "message.ack");
-    assert.ok(ackDelivery);
-    assert.equal(ackDelivery.payload.data.messageId, "msg_ack_test_100");
-    assert.equal(ackDelivery.payload.data.ack, 3);
-    assert.equal(ackDelivery.payload.data.ackName, "read");
-    assert.equal(ackDelivery.eventId, "evt_ack_msg_ack_test_100_3");
-
-    // Verify Updated delivery
-    const updDelivery = deliveries.find((d) => d.eventType === "message.updated");
-    assert.ok(updDelivery);
-    assert.equal(updDelivery.payload.data.messageId, "msg_upd_test_200");
-    assert.equal(updDelivery.payload.data.updateType, "edit");
-    assert.equal(updDelivery.payload.data.body, "Edited content");
-
-    // Verify State delivery
-    const stateDelivery = deliveries.find((d) => d.eventType === "session.state");
-    assert.ok(stateDelivery);
-    assert.equal(stateDelivery.payload.data.state, "ready");
-    assert.equal(stateDelivery.payload.data.previousState, "connecting");
-    assert.equal(stateDelivery.payload.data.details, "Daemon handshake confirmed");
+    // Strictly excluded: ACKs, message updates, and session state never reach the webhook queue
+    assert.equal(deliveries.length, 0);
+    // Bridge internal state tracking is still updated
+    assert.equal(bridge.lastState, "ready");
 
     bridge.stop();
     await queue.shutdown();
@@ -464,14 +442,14 @@ test("WebhookBridge suppresses duplicate events and duplicate session.state on r
     bridge.ingestState("ready");      // duplicate -> suppressed
 
     const deliveries = queue.listDeliveries().deliveries;
-    // Exactly 1 message.received and 2 session.state ("connecting", "ready")
-    assert.equal(deliveries.length, 3);
+    // Exactly 1 message.received (duplicate messages suppressed; session.state excluded)
+    assert.equal(deliveries.length, 1);
 
     const msgDeliveries = deliveries.filter((d) => d.eventType === "message.received");
     assert.equal(msgDeliveries.length, 1);
 
     const stateDeliveries = deliveries.filter((d) => d.eventType === "session.state");
-    assert.equal(stateDeliveries.length, 2);
+    assert.equal(stateDeliveries.length, 0);
 
     bridge.stop();
     await queue.shutdown();
@@ -602,7 +580,8 @@ test("WebhookBridge connects to daemon event broadcaster and forwards broadcast 
     });
 
     const deliveries = queue.listDeliveries().deliveries;
-    assert.equal(deliveries.length, 2);
+    // Exactly 1 message.received (incoming broadcast message enqueued; state excluded)
+    assert.equal(deliveries.length, 1);
 
     const msgDelivery = deliveries.find((d) => d.eventType === "message.received");
     assert.ok(msgDelivery);
@@ -610,8 +589,7 @@ test("WebhookBridge connects to daemon event broadcaster and forwards broadcast 
     assert.equal(msgDelivery.payload.account.number, "15559876543");
 
     const stateDelivery = deliveries.find((d) => d.eventType === "session.state");
-    assert.ok(stateDelivery);
-    assert.equal(stateDelivery.payload.data.state, "ready");
+    assert.equal(stateDelivery, undefined);
 
     bridge.stop();
     await queue.shutdown();

@@ -309,6 +309,21 @@ function enrichMessageSummary(m, options = {}) {
     null;
   const caption = hasMedia ? (m.body || (m._data && m._data.caption) || "") : "";
 
+  // 8. Mention metadata resolution
+  const rawMentions =
+    m.mentionedIds ||
+    m.mentionedJidList ||
+    m.mentions ||
+    (m._data && m._data.mentionedJidList) ||
+    [];
+  const mentionedJidList = Array.isArray(rawMentions)
+    ? rawMentions.map((item) =>
+        typeof item === "object" && item !== null
+          ? (item._serialized || item.user || String(item))
+          : String(item)
+      )
+    : [];
+
   return {
     // Legacy fields preserved for backward compatibility
     id,
@@ -334,6 +349,7 @@ function enrichMessageSummary(m, options = {}) {
     senderName: senderName || null,
     hasQuotedMsg: Boolean(quotedMsg),
     quotedMsg: quotedMsg || null,
+    mentionedJidList,
   };
 }
 
