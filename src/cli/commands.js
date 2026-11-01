@@ -5,6 +5,7 @@ const { ensureDaemon, request, daemonUrl } = require("./lib/transport");
 const { toJid, isGroupJid, shortJid } = require("../ipc/jid");
 const { ROUTES } = require("../ipc/protocol");
 const { pc, EMOJI, header, section, pair, table, delimiter } = require("./lib/theme");
+const { cmdWebhook } = require("./webhook");
 
 async function getDaemon() {
   return ensureDaemon();
@@ -885,6 +886,8 @@ const handlers = {
   download: cmdDownloadMedia,
   search: cmdSearch,
   find: cmdSearch,
+  webhook: cmdWebhook,
+  webhooks: cmdWebhook,
   tray: cmdTray,
   reconnect: cmdReconnect,
   autostart: cmdAutostart,

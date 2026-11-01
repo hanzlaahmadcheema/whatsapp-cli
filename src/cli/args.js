@@ -24,6 +24,8 @@ const COMMANDS = new Set([
   "download-media",
   "download",
   "search",
+  "webhook",
+  "webhooks",
   "tray",
   "reconnect",
   "autostart",

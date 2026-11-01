@@ -5,15 +5,18 @@ const { URL } = require("url");
 const { ROUTES, ok, fail, STATE } = require("../ipc/protocol");
 const { generateToken, TOKEN_HEADER } = require("../ipc/token");
 const daemonStore = require("../store/daemon");
+const { handleWebhookRoute } = require("./webhook-routes");
 
 class DaemonServer {
-  constructor({ service, port = 0, host = "127.0.0.1", token = null }) {
+  constructor({ service, port = 0, host = "127.0.0.1", token = null, webhookDataDir = null }) {
     this.service = service;
     this.host = host;
     this.port = port;
     this.token = token || generateToken();
     this.server = null;
     this.sseClients = new Set();
+    this.webhookDataDir = webhookDataDir;
+    this._webhookQueue = null;
   }
 
   start() {
@@ -28,8 +31,23 @@ class DaemonServer {
   }
 
   stop() {
+    if (this._webhookQueue) {
+      this._webhookQueue.shutdown().catch(() => {});
+      this._webhookQueue = null;
+    }
     if (this.server) this.server.close();
     this.server = null;
+  }
+
+  getWebhookQueue() {
+    if (!this._webhookQueue) {
+      const { DeliveryQueue } = require("../webhook");
+      this._webhookQueue = new DeliveryQueue({
+        dataDir: this.webhookDataDir || undefined,
+      });
+      this._webhookQueue.init().catch(() => {});
+    }
+    return this._webhookQueue;
   }
 
   handle(req, res) {
@@ -74,6 +92,9 @@ class DaemonServer {
     }
     if (pathname === ROUTES.SEARCH && method === "GET") {
       return this.handleSearch(req, res);
+    }
+    if (pathname === ROUTES.WEBHOOKS || pathname.startsWith(ROUTES.WEBHOOKS + "/")) {
+      return handleWebhookRoute(this, req, res, pathname, method);
     }
     if (pathname === ROUTES.CHATS && method === "GET") {
       return this.handleChats(req, res);

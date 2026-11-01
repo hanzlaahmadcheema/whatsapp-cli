@@ -15,6 +15,7 @@ ${pc.bold("Commands:")}
   ${pc.cyan("media")} [--chat <to>]   List recently received images and documents
   ${pc.cyan("download-media")} <id> [--out <path>]  Download an incoming image or document
   ${pc.cyan("search")} <query>           Unified search across messages, media, contacts & chats
+  ${pc.cyan("webhook")} <subcommand>     Manage webhook endpoints and delivery queue
   ${pc.cyan("chats")}                List recent chats
   ${pc.cyan("contacts")}             List contacts
   ${pc.cyan("history")} <to>         Show message history for a chat
