@@ -206,10 +206,67 @@ class WebhookBridge {
       client.on("message_edit", onEdit);
       client.on("message_revoke_everyone", onRevoke);
 
+      // Multi-device & LID change listener bridge:
+      // In WhatsApp Web 2.3000+, incoming messages from Linked Identity (@lid) chats or
+      // delayed decrypted payloads often trigger Backbone 'change' or 'change:type' rather
+      // than 'add'. Injecting a safety hook ensures onAddMessageEvent is reliably dispatched.
+      const installPageHooks = async () => {
+        try {
+          if (client.pupPage && !client.pupPage.isClosed()) {
+            await client.pupPage.evaluate(() => {
+              if (window._wwebjsLidPatchInstalled) return;
+              window._wwebjsLidPatchInstalled = true;
+
+              try {
+                const { Msg } = window.require("WAWebCollections");
+                window._wwebjsSeenIds = window._wwebjsSeenIds || new Set();
+
+                if (Msg && Msg._models) {
+                  for (const m of Msg._models) {
+                    const id = m.id?._serialized || m.id;
+                    if (id) window._wwebjsSeenIds.add(id);
+                  }
+                }
+
+                const handleMsg = (m) => {
+                  if (!m) return;
+                  const id = m.id?._serialized || m.id;
+                  if (!id || window._wwebjsSeenIds.has(id)) return;
+                  if (m.type === "ciphertext") return;
+                  if (!m.isNewMsg) return;
+
+                  window._wwebjsSeenIds.add(id);
+                  if (window._wwebjsSeenIds.size > 2000) {
+                    const oldest = window._wwebjsSeenIds.values().next().value;
+                    window._wwebjsSeenIds.delete(oldest);
+                  }
+
+                  if (typeof window.onAddMessageEvent === "function") {
+                    try {
+                      window.onAddMessageEvent(window.WWebJS.getMessageModel(m));
+                    } catch (_) {}
+                  }
+                };
+
+                Msg.on("add", handleMsg);
+                Msg.on("change", handleMsg);
+                Msg.on("change:type", handleMsg);
+              } catch (_) {}
+            });
+          }
+        } catch (_) {}
+      };
+
+      if (client.pupPage) {
+        installPageHooks().catch(() => {});
+      }
+      client.on("ready", installPageHooks);
+
       this._clientListeners.push(
         { emitter: client, event: "message_ack", fn: onAck },
         { emitter: client, event: "message_edit", fn: onEdit },
-        { emitter: client, event: "message_revoke_everyone", fn: onRevoke }
+        { emitter: client, event: "message_revoke_everyone", fn: onRevoke },
+        { emitter: client, event: "ready", fn: installPageHooks }
       );
     }
   }
