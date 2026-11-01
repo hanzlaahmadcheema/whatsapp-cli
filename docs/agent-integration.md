@@ -400,3 +400,14 @@ The repository package in [`skills/whatsapp/`](../skills/whatsapp/) provides str
 ### 5. `Data passed to getter must include an id property`
 - **Cause:** Unpatched `whatsapp-web.js` version.
 - **Fix:** Run `npm run patch` inside the `whatsapp-cli` directory. This applies the idempotent patch for WhatsApp Web's 2026 memoized getter changes.
+
+---
+
+## Real-Time Webhook Notifications for Autonomous Agents
+
+While the MCP server provides on-demand tool execution over `stdio`, autonomous agents that require real-time push notifications (for incoming messages, message updates, read receipts, or media attachments) can register an outbound HTTP webhook.
+
+The webhook engine dispatches HMAC-signed HTTP POST payloads to your agent server or automation platform with at-least-once delivery, exponential backoff, and granular privacy controls.
+
+See the complete [Universal Webhook Engine Guide](./webhooks.md) for architecture, event catalogs, CLI management, and HMAC-SHA256 signature verification code examples in JavaScript and Python.
+

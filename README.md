@@ -13,6 +13,7 @@ A robust, scriptable WhatsApp automation suite for the terminal and AI agents:
 - **Portable Agent Skill:** Turnkey skill package in [`skills/whatsapp/`](./skills/whatsapp/) with schemas, workflows, and parameter bounds.
 - **Bidirectional Media Support:** Send and receive photos/images (up to 16 MB) and documents/files (up to 100 MB). Inspect metadata and download attachments locally to disk.
 - **Linux Tray Manager & Sleep Recovery:** Native StatusNotifierItem system-tray indicator with automated laptop sleep/wake recovery.
+- **Universal Webhook Engine:** Outbound HTTP POST notifications with HMAC-SHA256 signatures, SSRF protection, exponential backoff, crash recovery, and granular privacy controls. See [Webhook Guide](./docs/webhooks.md).
 - **Cross-Platform:** Full support for Linux, macOS, and Windows 10/11.
 
 ---
@@ -143,6 +144,7 @@ wa tui                                       # launch interactive terminal UI
 | `wa send-file <contact> <file> [caption]` | Send a document/binary file up to 100 MB with original filename |
 | `wa media [--chat <contact>] [--type all\|image\|document] [--limit N]` | List recently received media attachments (images & documents) |
 | `wa download-media <messageId> [--out <dir-or-file>]` | Download an incoming attachment by message ID to local disk |
+| `wa webhook <command>` | Manage outgoing webhook endpoints, subscriptions, deliveries, and queue |
 | `wa receive [--once]` | Stream all incoming messages live via Server-Sent Events (SSE) |
 | `wa tui` | Open full-screen ANSI interactive terminal dashboard |
 | `wa mcp` | Launch Model Context Protocol stdio server for AI agents |

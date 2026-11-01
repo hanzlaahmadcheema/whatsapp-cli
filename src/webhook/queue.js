@@ -500,8 +500,14 @@ class DeliveryQueue {
    * Prunes records exceeding max entries or older than retention period.
    */
   pruneHistory(options = {}) {
-    const maxEntries = options.maxEntries || this.maxHistoryEntries;
-    const retentionMs = options.retentionMs || this.historyRetentionMs;
+    const maxEntries =
+      typeof options.maxEntries === "number"
+        ? options.maxEntries
+        : this.maxHistoryEntries;
+    const retentionMs =
+      typeof options.retentionMs === "number"
+        ? options.retentionMs
+        : this.historyRetentionMs;
     const now = Date.now();
     const cutoffTime = now - retentionMs;
 
@@ -519,6 +525,7 @@ class DeliveryQueue {
     }
 
     this._history = pruned;
+    this._saveHistory();
     return this._history.length;
   }
 
