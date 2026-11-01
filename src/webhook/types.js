@@ -7,6 +7,8 @@ const {
   DEFAULT_PRIVACY_CONFIG,
   DEFAULT_QUEUE_CONFIG,
   DELIVERY_STATUS,
+  SIGNING_PROFILES,
+  OPENBOT_STATUS_CODES,
 } = require("./constants");
 
 /**
@@ -108,11 +110,28 @@ function normalizeSecurity(security = {}) {
 }
 
 /**
+ * Normalizes and validates an endpoint signing profile.
+ * Defaults to "generic". Supported: "generic", "openbot".
+ */
+function normalizeProfile(profile) {
+  if (!profile || typeof profile !== "string") {
+    return SIGNING_PROFILES.GENERIC;
+  }
+  const clean = profile.trim().toLowerCase();
+  if (clean === SIGNING_PROFILES.OPENBOT) return SIGNING_PROFILES.OPENBOT;
+  if (clean === SIGNING_PROFILES.GENERIC) return SIGNING_PROFILES.GENERIC;
+  throw new Error(
+    `Invalid signing profile: "${profile}". Supported profiles: "${SIGNING_PROFILES.GENERIC}", "${SIGNING_PROFILES.OPENBOT}".`
+  );
+}
+
+/**
  * Strips or masks secrets in an endpoint object before exposure to callers, logs, or APIs.
  */
 function sanitizeEndpoint(endpoint, { exposeSecret = false } = {}) {
   if (!endpoint || typeof endpoint !== "object") return null;
   const copy = { ...endpoint };
+  copy.profile = normalizeProfile(copy.profile);
   if (!exposeSecret) {
     copy.secret = maskSecret(copy.secret);
   }
@@ -164,8 +183,23 @@ function calculateBackoff(attempt, options = {}) {
 /**
  * Determines whether an HTTP response status code is eligible for retry.
  */
-function isRetryableHttpStatus(statusCode) {
+function isRetryableHttpStatus(statusCode, profile = SIGNING_PROFILES.GENERIC) {
   if (typeof statusCode !== "number") return false;
+
+  if (profile === SIGNING_PROFILES.OPENBOT) {
+    // 200, 202 accepted (success, not retryable)
+    if (OPENBOT_STATUS_CODES.ACCEPTED.includes(statusCode)) return false;
+    // 400, 401, 404, 413, 415 permanent errors
+    if (OPENBOT_STATUS_CODES.PERMANENT.includes(statusCode)) return false;
+    // 429, 503 retryable
+    if (OPENBOT_STATUS_CODES.RETRYABLE.includes(statusCode)) return true;
+    // Any other 5xx is server error -> retry
+    if (statusCode >= 500 && statusCode < 600) return true;
+    // Any other 4xx is client error -> do not retry
+    return false;
+  }
+
+  // Generic profile:
   // 408 Request Timeout, 429 Too Many Requests
   if (statusCode === 408 || statusCode === 429) return true;
   // 5xx Server Errors (500, 502, 503, 504, etc.)
@@ -176,9 +210,9 @@ function isRetryableHttpStatus(statusCode) {
 /**
  * Determines whether an error (network, execution, or HTTP status) is eligible for retry.
  */
-function isRetryableError(err, statusCode = null) {
+function isRetryableError(err, statusCode = null, profile = SIGNING_PROFILES.GENERIC) {
   if (statusCode !== null && statusCode !== undefined) {
-    return isRetryableHttpStatus(statusCode);
+    return isRetryableHttpStatus(statusCode, profile);
   }
 
   if (!err) return false;
@@ -191,7 +225,10 @@ function isRetryableError(err, statusCode = null) {
     message.includes("Unsupported URL protocol") ||
     message.includes("Invalid URL format") ||
     message.includes("Credentials (username:password)") ||
-    message.includes("Redirect rejected")
+    message.includes("Redirect rejected") ||
+    message.includes("exceeds OpenBot limit") ||
+    message.includes("OpenBot body limit") ||
+    message.includes("Invalid OpenBot delivery ID")
   ) {
     return false;
   }
@@ -245,6 +282,7 @@ module.exports = {
   normalizeEvents,
   normalizePrivacy,
   normalizeSecurity,
+  normalizeProfile,
   sanitizeEndpoint,
   generateDeliveryId,
   generateEventId,

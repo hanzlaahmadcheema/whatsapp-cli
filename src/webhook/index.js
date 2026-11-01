@@ -7,6 +7,7 @@ const store = require("./store");
 const http = require("./http");
 const queue = require("./queue");
 const ingestion = require("./ingestion");
+const profiles = require("./profiles");
 
 module.exports = {
   ...constants,
@@ -16,4 +17,5 @@ module.exports = {
   ...http,
   ...queue,
   ...ingestion,
+  ...profiles,
 };

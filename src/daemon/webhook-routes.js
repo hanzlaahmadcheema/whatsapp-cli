@@ -215,9 +215,11 @@ async function handleWebhookRoute(server, req, res, pathname, method) {
             secret: endpoint.secret,
             eventId,
             deliveryId: `del_test_${Date.now()}`,
+            profile: endpoint.profile || "generic",
             options: {
               security: endpoint.security,
               timeoutMs: queue.timeoutMs,
+              profile: endpoint.profile || "generic",
             },
           });
 

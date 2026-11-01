@@ -13,8 +13,15 @@ const {
   WEBHOOK_HEADERS,
   DEFAULT_SECURITY_CONFIG,
   DEFAULT_QUEUE_CONFIG,
+  SIGNING_PROFILES,
 } = require("./constants");
-const { isRetryableError } = require("./types");
+const { isRetryableError, normalizeProfile } = require("./types");
+const {
+  formatPayloadForProfile,
+  checkProfileBodyConstraints,
+  buildProfileHeaders,
+  classifyProfileResponse,
+} = require("./profiles");
 
 const MAX_RESPONSE_BYTES = 64 * 1024; // 64 KB max response buffer
 
@@ -43,7 +50,8 @@ const MAX_RESPONSE_BYTES = 64 * 1024; // 64 KB max response buffer
  * @returns {Promise<object>} Structured delivery attempt result
  */
 async function dispatchWebhookRequest(params, redirectCount = 0) {
-  const { url, payload, secret, eventId, deliveryId, options = {} } = params;
+  const { url, payload, rawBody, secret, eventId, deliveryId, options = {} } = params;
+  const profile = normalizeProfile(params.profile || options.profile);
 
   if (!url || typeof url !== "string") {
     throw new Error("Webhook destination URL must be a non-empty string.");
@@ -61,10 +69,33 @@ async function dispatchWebhookRequest(params, redirectCount = 0) {
       ? options.timeoutMs
       : DEFAULT_QUEUE_CONFIG.timeoutMs;
 
-  const payloadStr =
-    typeof payload === "string" ? payload : JSON.stringify(payload);
-  const timestamp = Math.floor(Date.now() / 1000);
   const startTime = Date.now();
+
+  // Determine exact serialized rawBody bytes for transmission and signing
+  let payloadStr;
+  if (rawBody !== undefined && rawBody !== null) {
+    payloadStr = typeof rawBody === "string" ? rawBody : JSON.stringify(rawBody);
+  } else {
+    const formatted = formatPayloadForProfile(profile, payload);
+    payloadStr = typeof formatted === "string" ? formatted : JSON.stringify(formatted);
+  }
+
+  // Pre-flight check body constraints (e.g. OpenBot 64 KiB limit)
+  const constraint = checkProfileBodyConstraints(profile, payloadStr);
+  if (!constraint.ok) {
+    const durationMs = Date.now() - startTime;
+    return {
+      success: false,
+      statusCode: 413,
+      statusMessage: "Payload Too Large",
+      durationMs,
+      error: constraint.error,
+      retryable: false, // Non-retryable permanent error
+      responseBody: null,
+    };
+  }
+
+  const timestamp = Math.floor(Date.now() / 1000);
 
   // 1. SSRF validation & DNS resolution with IP pinning
   let destination;
@@ -78,7 +109,7 @@ async function dispatchWebhookRequest(params, redirectCount = 0) {
       statusMessage: null,
       durationMs,
       error: err.message || "SSRF destination validation failed",
-      retryable: isRetryableError(err),
+      retryable: isRetryableError(err, null, profile),
       responseBody: null,
     };
   }
@@ -89,21 +120,32 @@ async function dispatchWebhookRequest(params, redirectCount = 0) {
   const parsedUrl = new URL(url);
   const reqPath = (parsedUrl.pathname || "/") + (parsedUrl.search || "");
 
-  // 2. Cryptographic HMAC-SHA256 signatures
-  const signed = signPayload(secret, payloadStr, timestamp);
-
-  const reqHeaders = {
-    "content-type": "application/json; charset=utf-8",
-    "user-agent": "whatsapp-cli-webhook/1.0",
-    "content-length": Buffer.byteLength(payloadStr, "utf8"),
-    [WEBHOOK_HEADERS.SIGNATURE_WA]: signed.headerValue,
-    [WEBHOOK_HEADERS.SIGNATURE_256]: signed.hubHeaderValue,
-    [WEBHOOK_HEADERS.TIMESTAMP]: String(timestamp),
-    [WEBHOOK_HEADERS.EVENT_ID]: eventId || "",
-    [WEBHOOK_HEADERS.IDEMPOTENCY_KEY]: deliveryId || eventId || "",
-    host: port === (isHttps ? 443 : 80) ? hostname : `${hostname}:${port}`,
-    ...(options.headers || {}),
-  };
+  // 2. Profile-specific cryptographic signatures & headers
+  let reqHeaders;
+  try {
+    reqHeaders = buildProfileHeaders(profile, {
+      secret,
+      rawBody: payloadStr,
+      timestamp,
+      deliveryId: deliveryId || eventId || "",
+      eventId,
+      customHeaders: {
+        host: port === (isHttps ? 443 : 80) ? hostname : `${hostname}:${port}`,
+        ...(options.headers || {}),
+      },
+    });
+  } catch (signErr) {
+    const durationMs = Date.now() - startTime;
+    return {
+      success: false,
+      statusCode: null,
+      statusMessage: null,
+      durationMs,
+      error: signErr.message || "Failed to generate headers or signatures",
+      retryable: false,
+      responseBody: null,
+    };
+  }
 
   return new Promise((resolve) => {
     let settled = false;
@@ -178,6 +220,8 @@ async function dispatchWebhookRequest(params, redirectCount = 0) {
               {
                 ...params,
                 url: redirectUrl,
+                rawBody: payloadStr,
+                profile,
               },
               redirectCount + 1
             );
@@ -218,7 +262,11 @@ async function dispatchWebhookRequest(params, redirectCount = 0) {
         res.on("end", () => {
           const bodyBuffer = Buffer.concat(chunks);
           const responseBody = bodyBuffer.toString("utf8");
-          const isSuccess = statusCode >= 200 && statusCode < 300;
+          const { isSuccess, retryable } = classifyProfileResponse(
+            profile,
+            statusCode,
+            null
+          );
 
           finish({
             success: isSuccess,
@@ -226,7 +274,7 @@ async function dispatchWebhookRequest(params, redirectCount = 0) {
             statusMessage,
             durationMs,
             error: isSuccess ? null : `HTTP ${statusCode} ${statusMessage}`.trim(),
-            retryable: isRetryableError(null, statusCode),
+            retryable,
             responseBody: truncated
               ? `${responseBody} [TRUNCATED]`
               : responseBody,
@@ -234,13 +282,18 @@ async function dispatchWebhookRequest(params, redirectCount = 0) {
         });
 
         res.on("error", (err) => {
+          const { retryable } = classifyProfileResponse(
+            profile,
+            statusCode,
+            err
+          );
           finish({
             success: false,
             statusCode,
             statusMessage,
             durationMs: Date.now() - startTime,
             error: err.message || "Response stream error",
-            retryable: isRetryableError(err, statusCode),
+            retryable,
             responseBody: null,
           });
         });
@@ -250,25 +303,27 @@ async function dispatchWebhookRequest(params, redirectCount = 0) {
       req.setTimeout(timeoutMs, () => {
         const timeoutErr = new Error(`Delivery request timed out after ${timeoutMs}ms`);
         timeoutErr.code = "ETIMEDOUT";
+        const { retryable } = classifyProfileResponse(profile, null, timeoutErr);
         finish({
           success: false,
           statusCode: null,
           statusMessage: null,
           durationMs: Date.now() - startTime,
           error: timeoutErr.message,
-          retryable: true,
+          retryable,
           responseBody: null,
         });
       });
 
       req.on("error", (err) => {
+        const { retryable } = classifyProfileResponse(profile, null, err);
         finish({
           success: false,
           statusCode: null,
           statusMessage: null,
           durationMs: Date.now() - startTime,
           error: err.message || "Network request failed",
-          retryable: isRetryableError(err),
+          retryable,
           responseBody: null,
         });
       });
@@ -277,13 +332,14 @@ async function dispatchWebhookRequest(params, redirectCount = 0) {
       req.write(payloadStr, "utf8");
       req.end();
     } catch (err) {
+      const { retryable } = classifyProfileResponse(profile, null, err);
       finish({
         success: false,
         statusCode: null,
         statusMessage: null,
         durationMs: Date.now() - startTime,
         error: err.message || "Failed to initiate request",
-        retryable: isRetryableError(err),
+        retryable,
         responseBody: null,
       });
     }

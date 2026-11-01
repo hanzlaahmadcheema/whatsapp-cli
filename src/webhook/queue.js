@@ -16,9 +16,14 @@ const {
   generateEventId,
   calculateBackoff,
   sanitizeDelivery,
+  normalizeProfile,
 } = require("./types");
 const { dispatchWebhookRequest } = require("./http");
 const { ensureWebhookDir, getEndpoint } = require("./store");
+const {
+  formatPayloadForProfile,
+  checkProfileBodyConstraints,
+} = require("./profiles");
 
 /**
  * Resolves safe queue file path preventing symlinks and path traversal.
@@ -251,13 +256,36 @@ class DeliveryQueue {
     const now = Date.now();
     const isoNow = new Date(now).toISOString();
 
+    // Determine target profile and persist exact serialized body
+    let profile = params.profile;
+    if (!profile) {
+      try {
+        const ep = this._getEndpointFn(params.endpointId, this.dataDir);
+        if (ep && ep.profile) profile = ep.profile;
+      } catch (_) {}
+    }
+    const normalizedProfile = normalizeProfile(profile);
+
+    // If params.rawBody is provided, use it; otherwise format payload for profile and serialize
+    let rawBody = params.rawBody;
+    let payload = params.payload;
+    if (rawBody === undefined || rawBody === null) {
+      const formatted = formatPayloadForProfile(normalizedProfile, payload);
+      rawBody = typeof formatted === "string" ? formatted : JSON.stringify(formatted);
+      payload = formatted;
+    } else if (typeof rawBody !== "string") {
+      rawBody = JSON.stringify(rawBody);
+    }
+
     const delivery = {
       id: deliveryId,
       eventId,
       endpointId: params.endpointId,
       url: params.url || null,
       eventType: params.eventType,
-      payload: params.payload,
+      profile: normalizedProfile,
+      rawBody, // Persist exact serialized body across retries!
+      payload,
       status: DELIVERY_STATUS.PENDING,
       attempts: 0,
       maxAttempts: params.maxAttempts || this.maxAttempts,
@@ -393,16 +421,28 @@ class DeliveryQueue {
 
       const targetUrl = delivery.url || endpoint.url;
       const secret = endpoint.secret;
+      const profile = delivery.profile || endpoint.profile || "generic";
+
+      // Ensure stable rawBody is present and reused
+      const rawBody =
+        delivery.rawBody !== undefined && delivery.rawBody !== null
+          ? delivery.rawBody
+          : typeof delivery.payload === "string"
+          ? delivery.payload
+          : JSON.stringify(delivery.payload);
 
       return await this._dispatchFn({
         url: targetUrl,
+        rawBody,
         payload: delivery.payload,
         secret,
         eventId: delivery.eventId,
-        deliveryId: delivery.id,
+        deliveryId: delivery.id, // Stable delivery ID across retries
+        profile,
         options: {
           security: endpoint.security,
           timeoutMs: this.timeoutMs,
+          profile,
         },
       });
     })();

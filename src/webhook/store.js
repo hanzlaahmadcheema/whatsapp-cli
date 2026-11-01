@@ -12,6 +12,7 @@ const {
   normalizeEvents,
   normalizePrivacy,
   normalizeSecurity,
+  normalizeProfile,
   sanitizeEndpoint,
 } = require("./types");
 const { validateWebhookUrl } = require("./security");
@@ -144,16 +145,52 @@ function createEndpoint(data = {}, customDir) {
   const validatedUrl = validateWebhookUrl(data.url, security);
   const events = normalizeEvents(data.events);
   const privacy = normalizePrivacy(data.privacy);
+  const profile = normalizeProfile(data.profile);
 
   const endpoints = loadEndpoints(customDir);
+
+  // Safeguard: Check if an endpoint with the identical destination URL already exists
+  const existingId = Object.keys(endpoints).find(
+    (k) =>
+      endpoints[k].url.trim().toLowerCase() ===
+      validatedUrl.url.trim().toLowerCase()
+  );
+
+  if (existingId) {
+    const existing = endpoints[existingId];
+    existing.name =
+      typeof data.name === "string" ? data.name.trim() : existing.name;
+    existing.events = events;
+    existing.privacy = privacy;
+    existing.security = security;
+    existing.profile = profile;
+    if (data.enabled !== undefined) {
+      existing.enabled = Boolean(data.enabled);
+    }
+    if (data.secret && typeof data.secret === "string" && data.secret.trim()) {
+      existing.secret = data.secret.trim();
+    }
+    existing.updatedAt = new Date().toISOString();
+
+    endpoints[existingId] = existing;
+    saveEndpoints(endpoints, customDir);
+
+    // Return with secret visible once on creation/configuration
+    return { ...existing };
+  }
+
   const id = generateEndpointId();
-  const secret = generateEndpointSecret();
+  const secret =
+    data.secret && typeof data.secret === "string" && data.secret.trim()
+      ? data.secret.trim()
+      : generateEndpointSecret();
   const now = new Date().toISOString();
 
   const endpoint = {
     id,
     url: validatedUrl.url,
     name: typeof data.name === "string" ? data.name.trim() : null,
+    profile,
     secret,
     events,
     enabled: data.enabled !== undefined ? Boolean(data.enabled) : true,
@@ -228,10 +265,16 @@ function updateEndpoint(id, updates = {}, customDir) {
       ? (typeof updates.name === "string" ? updates.name.trim() : null)
       : current.name;
 
+  const updatedProfile =
+    updates.profile !== undefined
+      ? normalizeProfile(updates.profile)
+      : normalizeProfile(current.profile);
+
   const updated = {
     ...current,
     url: updatedUrl,
     name: updatedName,
+    profile: updatedProfile,
     events: updatedEvents,
     enabled: updatedEnabled,
     privacy: updatedPrivacy,
@@ -290,6 +333,33 @@ function rotateEndpointSecret(id, customDir) {
 }
 
 /**
+ * Explicitly sets or imports an existing signing secret for an endpoint.
+ * Protects against generating a replacement secret for external integrations.
+ */
+function setEndpointSecret(id, newSecret, customDir) {
+  if (!id) throw new Error("Endpoint ID is required.");
+  if (!newSecret || typeof newSecret !== "string" || !newSecret.trim()) {
+    throw new Error("Secret must be a non-empty string.");
+  }
+  const endpoints = loadEndpoints(customDir);
+  const current = endpoints[id];
+  if (!current) {
+    throw new Error(`Webhook endpoint not found: "${id}"`);
+  }
+
+  const updated = {
+    ...current,
+    secret: newSecret.trim(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  endpoints[id] = updated;
+  saveEndpoints(endpoints, customDir);
+
+  return sanitizeEndpoint(updated, { exposeSecret: false });
+}
+
+/**
  * Returns all active endpoints subscribed to an event type (with unmasked secret for dispatcher).
  */
 function findEndpointsForEvent(eventType, customDir) {
@@ -320,5 +390,6 @@ module.exports = {
   updateEndpoint,
   deleteEndpoint,
   rotateEndpointSecret,
+  setEndpointSecret,
   findEndpointsForEvent,
 };

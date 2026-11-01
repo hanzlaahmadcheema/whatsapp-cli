@@ -476,6 +476,136 @@ function verifySignature({
   return { ok: true };
 }
 
+/**
+ * Validates delivery ID matches OpenBot / standard requirements:
+ * 1–256 ASCII characters matching ^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$
+ */
+function validateDeliveryId(deliveryId) {
+  if (!deliveryId || typeof deliveryId !== "string") {
+    throw new Error("Invalid OpenBot delivery ID: delivery ID must be a non-empty string.");
+  }
+  const regex = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+  if (!regex.test(deliveryId)) {
+    throw new Error(
+      `Invalid OpenBot delivery ID format: "${deliveryId}". Must match ^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$`
+    );
+  }
+  return deliveryId;
+}
+
+/**
+ * Signs an outgoing OpenBot payload using HMAC-SHA256:
+ * HMAC-SHA256(secret, timestamp + "." + deliveryId + "." + rawBody)
+ * Format: sha256=<lowercase hexadecimal digest>
+ */
+function signOpenBotPayload(secret, rawBody, timestamp, deliveryId) {
+  if (!secret || typeof secret !== "string") {
+    throw new Error("Signing secret must be a non-empty string.");
+  }
+  if (rawBody === undefined || rawBody === null) {
+    throw new Error("Payload rawBody is required for signing.");
+  }
+  const rawBodyStr = typeof rawBody === "string" ? rawBody : JSON.stringify(rawBody);
+  const ts = Number(timestamp) || Math.floor(Date.now() / 1000);
+  const delId = validateDeliveryId(deliveryId);
+
+  const signaturePayload = `${ts}.${delId}.${rawBodyStr}`;
+
+  const hmacHex = crypto
+    .createHmac("sha256", secret)
+    .update(signaturePayload, "utf8")
+    .digest("hex");
+
+  return {
+    signature: hmacHex,
+    timestamp: ts,
+    deliveryId: delId,
+    headerValue: `sha256=${hmacHex}`,
+  };
+}
+
+/**
+ * Verifies an incoming OpenBot HMAC-SHA256 signature:
+ * Verifies timestamp is within tolerance window (default: 5 minutes = 300s)
+ * and signature matches HMAC-SHA256(secret, timestamp + "." + deliveryId + "." + rawBody)
+ */
+function verifyOpenBotSignature({
+  secret,
+  rawBody,
+  timestampHeader,
+  deliveryIdHeader,
+  signatureHeader,
+  toleranceSeconds = 300,
+  nowSeconds = Math.floor(Date.now() / 1000),
+}) {
+  if (!secret || typeof secret !== "string") {
+    return { ok: false, reason: "Missing or invalid secret" };
+  }
+  if (rawBody === undefined || rawBody === null) {
+    return { ok: false, reason: "Missing payload rawBody" };
+  }
+  if (!timestampHeader) {
+    return { ok: false, reason: "Missing X-OpenBot-Timestamp header" };
+  }
+  if (!deliveryIdHeader) {
+    return { ok: false, reason: "Missing X-OpenBot-Delivery-Id header" };
+  }
+  if (!signatureHeader || typeof signatureHeader !== "string") {
+    return { ok: false, reason: "Missing or invalid X-OpenBot-Signature header" };
+  }
+
+  const rawBodyStr = typeof rawBody === "string" ? rawBody : JSON.stringify(rawBody);
+
+  // Parse timestamp
+  const ts = parseInt(timestampHeader, 10);
+  if (isNaN(ts)) {
+    return { ok: false, reason: "Invalid timestamp header format" };
+  }
+
+  const age = Math.abs(nowSeconds - ts);
+  if (age > toleranceSeconds) {
+    return {
+      ok: false,
+      reason: `Timestamp outside tolerance window (${age}s > ${toleranceSeconds}s)`,
+    };
+  }
+
+  // Parse signature header: expects "sha256=<hex>"
+  let receivedSignatureHex = signatureHeader.trim();
+  if (receivedSignatureHex.startsWith("sha256=")) {
+    receivedSignatureHex = receivedSignatureHex.slice(7).trim();
+  } else {
+    return { ok: false, reason: 'Invalid signature format (must start with "sha256=")' };
+  }
+
+  // Validate delivery ID
+  try {
+    validateDeliveryId(deliveryIdHeader);
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+
+  const expectedData = `${ts}.${deliveryIdHeader}.${rawBodyStr}`;
+  const expectedHmacHex = crypto
+    .createHmac("sha256", secret)
+    .update(expectedData, "utf8")
+    .digest("hex");
+
+  const expectedBuf = Buffer.from(expectedHmacHex, "utf8");
+  const receivedBuf = Buffer.from(receivedSignatureHex, "utf8");
+
+  if (expectedBuf.length !== receivedBuf.length) {
+    return { ok: false, reason: "Signature length mismatch" };
+  }
+
+  const isValid = crypto.timingSafeEqual(expectedBuf, receivedBuf);
+  if (!isValid) {
+    return { ok: false, reason: "Signature mismatch" };
+  }
+
+  return { ok: true };
+}
+
 module.exports = {
   ipv4ToInt,
   isInIpv4Subnet,
@@ -489,4 +619,7 @@ module.exports = {
   validateRedirect,
   signPayload,
   verifySignature,
+  validateDeliveryId,
+  signOpenBotPayload,
+  verifyOpenBotSignature,
 };

@@ -414,3 +414,58 @@ Any external agent or automation platform (LangChain, AutoGen, CrewAI, Node-RED,
 - **Timing Attacks**: Signature comparisons use constant-time algorithms.
 - **Path Traversal & Symlinks**: Store and queue files verify resolved real paths and reject symbolic links.
 - **Atomic Operations**: All file persistence uses atomic temporary file writes and `fsyncSync` prior to replacement.
+
+---
+
+## 8. OpenBot Webhook Compatibility
+
+The engine includes first-class compatibility for the [OpenBot](https://openbot.run) webhook protocol via an explicit, per-endpoint signing profile.
+
+### Protocol Specification
+
+| Protocol Component | Generic Webhook (`--profile generic`) | OpenBot Webhook (`--profile openbot`) |
+| :--- | :--- | :--- |
+| **Request Headers** | `X-WA-Signature`, `X-Hub-Signature-256`, `X-WA-Timestamp`, `X-WA-Event-ID`, `Idempotency-Key` | `X-OpenBot-Timestamp`, `X-OpenBot-Delivery-Id`, `X-OpenBot-Signature`, `Content-Type: application/json` |
+| **Signature Formula** | $\text{HMAC-SHA256}(\text{secret}, \text{timestamp} + "." + \text{raw\_body})$ | $\text{HMAC-SHA256}(\text{secret}, \text{timestamp} + "." + \text{delivery\_id} + "." + \text{raw\_body})$ |
+| **Signature Format** | `t=<ts>,v1=<hex>` and `sha256=<hex>` | `sha256=<lowercase_hex_digest>` |
+| **Envelope Format** | `{ id, event, timestamp, account, data }` | `{ type, occurredAt, data }` |
+| **Max Request Body** | Bounded only by system memory | **Strict 64 KiB (65,536 bytes)** pre-flight ceiling |
+| **Success Codes** | HTTP 200 - 299 | **HTTP 200 and 202** (accepted; do not retry) |
+| **Retryable Codes** | HTTP 408, 429, 5xx | **HTTP 429 and 503** (plus network drops & server 5xx) |
+| **Permanent Errors** | HTTP 4xx (except 408, 429) | **HTTP 400, 401, 404, 413, 415** (dead-letter immediately) |
+
+### Registering or Configuring an OpenBot Endpoint
+
+```bash
+# 1. Register with OpenBot profile and import secret securely via stdin (recommended)
+cat secret.key | wa webhook add https://signal.openbot.run/api/v1/webhook --profile openbot --secret-stdin
+
+# 2. Or import secret from a permission-restricted file (mode 0600)
+wa webhook add https://signal.openbot.run/api/v1/webhook --profile openbot --secret-file ~/.openbot/secret.key
+
+# 3. Or import secret from an environment variable
+export OPENBOT_SECRET="your_openbot_secret"
+wa webhook add https://signal.openbot.run/api/v1/webhook --profile openbot --secret-env OPENBOT_SECRET
+
+# 4. Or update an existing endpoint to the OpenBot profile
+wa webhook update wh_9d4a8ef71c2b --profile openbot
+
+# 5. Or update/import the signing secret on an existing endpoint
+wa webhook set-secret wh_9d4a8ef71c2b --secret-file ~/.openbot/secret.key
+```
+
+### Secret Ingestion Security Notice
+
+> [!TIP]
+> **Secret Handling Best Practices**:
+> - `--secret-stdin`: **Highest security**. Secret is piped directly into the CLI process without touching the filesystem or process argument table.
+> - `--secret-file <path>`: **Secure**. Reads from a permission-restricted file (`chmod 600`).
+> - `--secret-env <var>`: Convenient, but note that on Linux systems, environment variables can be inspected by local processes running under the same user UID (or root) via `/proc/<pid>/environ`.
+> - **Never pass secrets directly in command arguments**: The CLI explicitly does not accept `--secret <string>` flags to prevent leaking keys into shell histories (`~/.bash_history`) or `ps aux` process lists.
+
+### Stable Retry Guarantees
+For OpenBot retries:
+1. The engine preserves the exact serialized request body bytes (`rawBody`) and `deliveryId` in `.data/webhooks/queue.json`.
+2. On every retry attempt, the delivery ID and request body remain 100% identical.
+3. The engine generates a **fresh timestamp** and **fresh HMAC signature** on each attempt, ensuring the destination's 5-minute clock skew check succeeds regardless of backoff delay.
+

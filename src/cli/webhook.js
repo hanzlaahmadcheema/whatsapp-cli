@@ -1,8 +1,51 @@
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
 const { ensureDaemon, request } = require("./lib/transport");
 const { ROUTES } = require("../ipc/protocol");
 const { pc, EMOJI, header, section, pair, table, delimiter } = require("./lib/theme");
+const { setEndpointSecret } = require("../webhook/store");
+
+/**
+ * Reads a secret safely from stdin, file, or environment variable.
+ * Never accepts secret directly as command line argument to avoid leaking into bash history.
+ */
+function readSecretFromFlags(flags) {
+  // 1. Standard Input (highest preference)
+  if (flags["secret-stdin"] || flags.stdin) {
+    try {
+      return fs.readFileSync(0, "utf8").trim();
+    } catch (err) {
+      throw new Error(`Failed to read secret from stdin: ${err.message}`);
+    }
+  }
+
+  // 2. Secret file (permission-restricted file preference)
+  if (flags["secret-file"]) {
+    const filePath = path.resolve(flags["secret-file"]);
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Secret file does not exist: "${filePath}"`);
+    }
+    try {
+      return fs.readFileSync(filePath, "utf8").trim();
+    } catch (err) {
+      throw new Error(`Failed to read secret file "${filePath}": ${err.message}`);
+    }
+  }
+
+  // 3. Environment variable (note: inspectable by root/same-UID processes via /proc/<pid>/environ)
+  if (flags["secret-env"]) {
+    const varName = flags["secret-env"];
+    const val = process.env[varName];
+    if (!val) {
+      throw new Error(`Environment variable "${varName}" is empty or not set.`);
+    }
+    return val.trim();
+  }
+
+  return null;
+}
 
 /**
  * Main entry point for `wa webhook <subcommand>`
@@ -28,6 +71,8 @@ async function cmdWebhook(argv) {
     case "rm":
     case "remove":
       return webhookDelete(restPositional[0], flags);
+    case "set-secret":
+      return webhookSetSecret(restPositional[0], flags);
     case "rotate":
     case "rotate-secret":
       return webhookRotateSecret(restPositional[0], flags);
@@ -72,7 +117,7 @@ async function webhookList(flags) {
 
   console.log(`\n${pc.bold("Registered Webhook Endpoints:")} (${endpoints.length})\n`);
   const rows = [
-    [pc.bold("ID"), pc.bold("NAME"), pc.bold("STATUS"), pc.bold("EVENTS"), pc.bold("URL")],
+    [pc.bold("ID"), pc.bold("NAME"), pc.bold("PROFILE"), pc.bold("STATUS"), pc.bold("EVENTS"), pc.bold("URL")],
   ];
 
   for (const ep of endpoints) {
@@ -81,6 +126,7 @@ async function webhookList(flags) {
     rows.push([
       pc.cyan(ep.id),
       ep.name || pc.dim("(none)"),
+      ep.profile || "generic",
       statusText,
       eventsText,
       ep.url,
@@ -94,7 +140,15 @@ async function webhookAdd(positional, flags) {
   const url = positional[0] || flags.url;
   if (!url) {
     console.error(`${EMOJI.fail} ${pc.red("Webhook destination URL is required.")}`);
-    console.error(`Usage: ${pc.cyan("wa webhook add <url> [--name <name>] [--events <events>]")}`);
+    console.error(`Usage: ${pc.cyan("wa webhook add <url> [--profile <generic|openbot>] [--name <name>] [--events <events>]")}`);
+    process.exit(1);
+  }
+
+  let secret;
+  try {
+    secret = readSecretFromFlags(flags);
+  } catch (err) {
+    console.error(`${EMOJI.fail} ${pc.red(err.message)}`);
     process.exit(1);
   }
 
@@ -103,6 +157,7 @@ async function webhookAdd(positional, flags) {
   const events = flags.events ? flags.events.split(",").map((s) => s.trim()) : ["*"];
   const name = flags.name || flags.n || null;
   const enabled = flags.disabled ? false : true;
+  const profile = flags.profile || "generic";
 
   const security = {};
   if (flags["allow-localhost"] || flags.localhost) security.allowLocalhost = true;
@@ -114,8 +169,10 @@ async function webhookAdd(positional, flags) {
     name,
     events,
     enabled,
+    profile,
     security,
   };
+  if (secret) payload.secret = secret;
 
   const res = await request(base, token, "POST", ROUTES.WEBHOOKS, payload);
 
@@ -128,14 +185,19 @@ async function webhookAdd(positional, flags) {
   console.log(`\n${EMOJI.ok} ${pc.green("Webhook endpoint registered successfully!")}\n`);
   console.log(pair("ID", pc.cyan(ep.id)));
   if (ep.name) console.log(pair("Name", ep.name));
+  console.log(pair("Profile", ep.profile || "generic"));
   console.log(pair("URL", ep.url));
   console.log(pair("Status", ep.enabled ? pc.green("enabled") : pc.red("disabled")));
   console.log(pair("Events", ep.events.join(", ")));
   console.log("");
-  console.log(`${pc.bold(pc.yellow("Signing Secret:"))} ${pc.bold(pc.cyan(ep.secret))}`);
-  console.log(
-    `${pc.yellow("⚠ IMPORTANT:")} Save this signing secret now. It is used to verify HMAC-SHA256 signatures and ${pc.bold("will not be shown again.")}\n`
-  );
+  if (secret) {
+    console.log(`${pc.bold(pc.green("Secret Configured:"))} Existing secret securely linked to endpoint.\n`);
+  } else {
+    console.log(`${pc.bold(pc.yellow("Generated Secret:"))} ${pc.bold(pc.cyan(ep.secret))}`);
+    console.log(
+      `${pc.yellow("⚠ IMPORTANT:")} Save this signing secret now. It is used to verify signatures and ${pc.bold("will not be shown again.")}\n`
+    );
+  }
 }
 
 async function webhookGet(id, flags) {
@@ -157,6 +219,7 @@ async function webhookGet(id, flags) {
   console.log(`\n${pc.bold("Webhook Endpoint Details:")}\n`);
   console.log(pair("ID", pc.cyan(ep.id)));
   console.log(pair("Name", ep.name || pc.dim("(none)")));
+  console.log(pair("Profile", ep.profile || "generic"));
   console.log(pair("URL", ep.url));
   console.log(pair("Status", ep.enabled ? pc.green("enabled") : pc.red("disabled")));
   console.log(pair("Secret", pc.dim(ep.secret)));
@@ -169,12 +232,17 @@ async function webhookGet(id, flags) {
 async function webhookUpdate(id, flags) {
   if (!id) {
     console.error(`${EMOJI.fail} ${pc.red("Endpoint ID is required.")}`);
-    console.error(`Usage: ${pc.cyan("wa webhook update <id> [--url <url>] [--enable|--disable]")}`);
+    console.error(`Usage: ${pc.cyan("wa webhook update <id> [--url <url>] [--profile <generic|openbot>] [--enable|--disable]")}`);
     process.exit(1);
   }
 
   const updates = {};
   if (flags.url) updates.url = flags.url;
+  if (flags.name !== undefined) updates.name = flags.name;
+  if (flags.profile) updates.profile = flags.profile;
+  if (flags.events) updates.events = flags.events.split(",").map((s) => s.trim());
+  if (flags.enable) updates.enabled = true;
+  if (flags.disable) updates.enabled = false;
   if (flags.name !== undefined) updates.name = flags.name;
   if (flags.events) updates.events = flags.events.split(",").map((s) => s.trim());
   if (flags.enable) updates.enabled = true;
@@ -366,6 +434,44 @@ async function webhookClean(flags) {
   console.log("");
 }
 
+async function webhookSetSecret(id, flags) {
+  if (!id) {
+    console.error(`${EMOJI.fail} ${pc.red("Endpoint ID is required.")}`);
+    console.error(
+      `Usage: ${pc.cyan("wa webhook set-secret <id> <--secret-stdin | --secret-file <path> | --secret-env <var>>")}`
+    );
+    process.exit(1);
+  }
+
+  let secret;
+  try {
+    secret = readSecretFromFlags(flags);
+  } catch (err) {
+    console.error(`${EMOJI.fail} ${pc.red(err.message)}`);
+    process.exit(1);
+  }
+
+  if (!secret) {
+    console.error(`${EMOJI.fail} ${pc.red("No signing secret provided.")}`);
+    console.error(
+      `Provide secret using ${pc.cyan("--secret-stdin")} (recommended), ${pc.cyan("--secret-file <path>")}, or ${pc.cyan("--secret-env <var>")}.`
+    );
+    process.exit(1);
+  }
+
+  try {
+    const updated = setEndpointSecret(id, secret);
+    console.log(`\n${EMOJI.ok} ${pc.green(`Signing secret successfully updated for endpoint "${id}".`)}\n`);
+    console.log(pair("ID", pc.cyan(updated.id)));
+    console.log(pair("Profile", updated.profile || "generic"));
+    console.log(pair("Masked Secret", pc.dim(updated.secret)));
+    console.log("");
+  } catch (err) {
+    console.error(`${EMOJI.fail} ${pc.red(err.message)}`);
+    process.exit(1);
+  }
+}
+
 function webhookHelp() {
   console.log(`
 ${pc.bold("Usage:")} wa webhook <command> [options]
@@ -376,6 +482,7 @@ ${pc.bold("Commands:")}
   ${pc.cyan("get")} <id>              Show endpoint configuration details
   ${pc.cyan("update")} <id>           Update an existing endpoint
   ${pc.cyan("delete")} <id>           Delete a webhook endpoint
+  ${pc.cyan("set-secret")} <id>       Configure signing secret via stdin, file, or env var
   ${pc.cyan("rotate")} <id>           Rotate signing secret (shows new secret once)
   ${pc.cyan("test")} <id>             Send an immediate test event to an endpoint
   ${pc.cyan("deliveries")}            View delivery history and queue records
@@ -384,10 +491,14 @@ ${pc.bold("Commands:")}
   ${pc.cyan("clean")}                 Prune old delivery history records
 
 ${pc.bold("Options:")}
+  --profile <profile> Signing profile: "generic" (default) or "openbot"
   --name <str>        Human-readable endpoint label
   --events <list>     Comma-separated event names (default: "*")
   --allow-localhost   Permit loopback / localhost destinations
   --allow-lan         Permit private RFC1918 LAN destinations
+  --secret-stdin      Read signing secret from stdin (recommended; no shell history leak)
+  --secret-file <path> Read signing secret from permission-restricted file (0600)
+  --secret-env <var>  Read signing secret from environment variable (inspectable via /proc)
   --status <status>   Filter deliveries by status (pending, failed, succeeded, dead_letter)
   --limit <n>         Pagination limit
   --offset <n>        Pagination offset

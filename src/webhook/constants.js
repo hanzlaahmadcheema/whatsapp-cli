@@ -36,6 +36,25 @@ const DELIVERY_STATUS = Object.freeze({
   DEAD_LETTER: "dead_letter",
 });
 
+const SIGNING_PROFILES = Object.freeze({
+  GENERIC: "generic",
+  OPENBOT: "openbot",
+});
+
+const OPENBOT_HEADERS = Object.freeze({
+  TIMESTAMP: "x-openbot-timestamp",
+  DELIVERY_ID: "x-openbot-delivery-id",
+  SIGNATURE: "x-openbot-signature",
+});
+
+const OPENBOT_MAX_BODY_BYTES = 64 * 1024; // 64 KiB
+
+const OPENBOT_STATUS_CODES = Object.freeze({
+  ACCEPTED: Object.freeze([200, 202]),
+  RETRYABLE: Object.freeze([429, 503]),
+  PERMANENT: Object.freeze([400, 401, 404, 413, 415]),
+});
+
 const DEFAULT_QUEUE_CONFIG = Object.freeze({
   maxAttempts: 5,
   initialBackoffMs: 1000,
@@ -78,4 +97,8 @@ module.exports = {
   DEFAULT_SECURITY_CONFIG,
   DEFAULT_PRIVACY_CONFIG,
   PERMISSIONS,
+  SIGNING_PROFILES,
+  OPENBOT_HEADERS,
+  OPENBOT_MAX_BODY_BYTES,
+  OPENBOT_STATUS_CODES,
 };
