@@ -17,10 +17,12 @@ class DaemonServer {
     this.sseClients = new Set();
     this.webhookDataDir = webhookDataDir;
     this._webhookQueue = null;
+    this._webhookBridge = null;
   }
 
   start() {
     this.server = http.createServer((req, res) => this.handle(req, res));
+    this.attachWebhookBridge();
     return new Promise((resolve, reject) => {
       this.server.once("error", reject);
       this.server.listen(this.port, this.host, () => {
@@ -30,7 +32,23 @@ class DaemonServer {
     });
   }
 
+  attachWebhookBridge() {
+    if (!this._webhookBridge && this.service) {
+      const { WebhookBridge } = require("../webhook");
+      this._webhookBridge = new WebhookBridge({
+        service: this.service,
+        queue: this.getWebhookQueue(),
+        dataDir: this.webhookDataDir || undefined,
+      });
+      this._webhookBridge.start();
+    }
+  }
+
   stop() {
+    if (this._webhookBridge) {
+      this._webhookBridge.stop();
+      this._webhookBridge = null;
+    }
     if (this._webhookQueue) {
       this._webhookQueue.shutdown().catch(() => {});
       this._webhookQueue = null;

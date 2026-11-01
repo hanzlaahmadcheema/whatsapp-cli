@@ -6,6 +6,7 @@ const security = require("./security");
 const store = require("./store");
 const http = require("./http");
 const queue = require("./queue");
+const ingestion = require("./ingestion");
 
 module.exports = {
   ...constants,
@@ -14,4 +15,5 @@ module.exports = {
   ...store,
   ...http,
   ...queue,
+  ...ingestion,
 };
