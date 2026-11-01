@@ -1,9 +1,12 @@
 "use strict";
 
+const crypto = require("crypto");
 const {
   WEBHOOK_EVENTS,
   DEFAULT_SECURITY_CONFIG,
   DEFAULT_PRIVACY_CONFIG,
+  DEFAULT_QUEUE_CONFIG,
+  DELIVERY_STATUS,
 } = require("./constants");
 
 /**
@@ -116,6 +119,126 @@ function sanitizeEndpoint(endpoint, { exposeSecret = false } = {}) {
   return copy;
 }
 
+/**
+ * Generates a unique delivery ID.
+ */
+function generateDeliveryId() {
+  return `del_${crypto.randomBytes(12).toString("hex")}`;
+}
+
+/**
+ * Generates a unique event ID.
+ */
+function generateEventId() {
+  return `evt_${crypto.randomBytes(12).toString("hex")}`;
+}
+
+/**
+ * Calculates exponential backoff with full jitter.
+ *
+ * @param {number} attempt - Current attempt number (1-based)
+ * @param {object} [options] - Configuration overrides
+ * @param {number} [options.initialBackoffMs=1000]
+ * @param {number} [options.maxBackoffMs=60000]
+ * @param {number} [options.backoffFactor=2]
+ * @param {boolean} [options.jitter=true] - If false, returns deterministic max backoff
+ * @returns {number} Backoff delay in milliseconds
+ */
+function calculateBackoff(attempt, options = {}) {
+  const initial = options.initialBackoffMs || DEFAULT_QUEUE_CONFIG.initialBackoffMs;
+  const max = options.maxBackoffMs || DEFAULT_QUEUE_CONFIG.maxBackoffMs;
+  const factor = options.backoffFactor || DEFAULT_QUEUE_CONFIG.backoffFactor;
+
+  const exponent = Math.max(0, (attempt || 1) - 1);
+  const calculated = Math.min(max, initial * Math.pow(factor, exponent));
+
+  if (options.jitter === false) {
+    return Math.round(calculated);
+  }
+
+  // Full jitter: uniformly random between 50ms and calculated delay
+  const delay = Math.floor(Math.random() * calculated);
+  return Math.max(50, delay);
+}
+
+/**
+ * Determines whether an HTTP response status code is eligible for retry.
+ */
+function isRetryableHttpStatus(statusCode) {
+  if (typeof statusCode !== "number") return false;
+  // 408 Request Timeout, 429 Too Many Requests
+  if (statusCode === 408 || statusCode === 429) return true;
+  // 5xx Server Errors (500, 502, 503, 504, etc.)
+  if (statusCode >= 500 && statusCode < 600) return true;
+  return false;
+}
+
+/**
+ * Determines whether an error (network, execution, or HTTP status) is eligible for retry.
+ */
+function isRetryableError(err, statusCode = null) {
+  if (statusCode !== null && statusCode !== undefined) {
+    return isRetryableHttpStatus(statusCode);
+  }
+
+  if (!err) return false;
+  const message = typeof err === "string" ? err : err.message || "";
+  const code = err.code || "";
+
+  // SSRF violations, URL formatting, credentials, and redirect errors are permanent/non-retryable
+  if (
+    message.includes("Security violation (SSRF)") ||
+    message.includes("Unsupported URL protocol") ||
+    message.includes("Invalid URL format") ||
+    message.includes("Credentials (username:password)") ||
+    message.includes("Redirect rejected")
+  ) {
+    return false;
+  }
+
+  // Network drop, timeout, or connection reset errors are retryable
+  const retryableCodes = [
+    "ECONNRESET",
+    "ECONNREFUSED",
+    "ETIMEDOUT",
+    "EHOSTUNREACH",
+    "ENETUNREACH",
+    "EPIPE",
+    "UND_ERR_SOCKET",
+    "EAI_AGAIN",
+  ];
+  if (retryableCodes.includes(code)) return true;
+
+  if (
+    message.includes("timeout") ||
+    message.includes("ECONNRESET") ||
+    message.includes("ECONNREFUSED") ||
+    message.includes("socket hang up")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Sanitizes a delivery record for logging, inspection, or API response.
+ * Guarantees no secret or sensitive auth material is present.
+ */
+function sanitizeDelivery(delivery) {
+  if (!delivery || typeof delivery !== "object") return null;
+  const copy = { ...delivery };
+  if (copy.secret) delete copy.secret;
+  if (copy.history && Array.isArray(copy.history)) {
+    copy.history = copy.history.map((h) => {
+      const hCopy = { ...h };
+      if (hCopy.secret) delete hCopy.secret;
+      return hCopy;
+    });
+  }
+  return copy;
+}
+
 module.exports = {
   maskSecret,
   isValidEventType,
@@ -123,4 +246,10 @@ module.exports = {
   normalizePrivacy,
   normalizeSecurity,
   sanitizeEndpoint,
+  generateDeliveryId,
+  generateEventId,
+  calculateBackoff,
+  isRetryableHttpStatus,
+  isRetryableError,
+  sanitizeDelivery,
 };
