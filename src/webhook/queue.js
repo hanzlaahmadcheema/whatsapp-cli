@@ -146,6 +146,7 @@ class DeliveryQueue {
     this._timer = null;
     this._shuttingDown = false;
     this._initialized = false;
+    this.autoProcess = options.autoProcess !== undefined ? options.autoProcess : true;
   }
 
   /**
@@ -172,8 +173,11 @@ class DeliveryQueue {
     // 3. Crash recovery: recover items stuck in "delivering"
     this.recover();
 
+    if (autoProcess === false) {
+      this.autoProcess = false;
+    }
     this._initialized = true;
-    if (autoProcess) {
+    if (this.autoProcess) {
       this.processQueue();
     }
   }
@@ -232,7 +236,80 @@ class DeliveryQueue {
   }
 
   /**
+   * Synchronously ensures queue and history state are loaded from disk.
+   */
+  _ensureLoadedSync() {
+    if (this._initialized) return;
+    ensureWebhookDir(this.dataDir);
+
+    const queuePath = getQueueFilePath(this.dataDir);
+    const historyPath = getHistoryFilePath(this.dataDir);
+
+    if (this._deliveries.size === 0) {
+      const rawQueue = loadJsonFile(queuePath) || {};
+      for (const [id, item] of Object.entries(rawQueue)) {
+        this._deliveries.set(id, item);
+      }
+    }
+
+    if (this._history.length === 0) {
+      const rawHistory = loadJsonFile(historyPath) || [];
+      this._history = Array.isArray(rawHistory) ? rawHistory : [];
+    }
+  }
+
+  /**
+   * Finds an existing delivery with matching endpointId and eventId.
+   * Checks both active queue (_deliveries) and completed history (_history).
+   *
+   * @param {string} endpointId
+   * @param {string} eventId
+   * @returns {object|null} Existing delivery record if found
+   */
+  findDeliveryByEventId(endpointId, eventId) {
+    if (!endpointId || !eventId) return null;
+
+    this._ensureLoadedSync();
+
+    // 1. Search active queue (PENDING, DELIVERING, FAILED)
+    for (const delivery of this._deliveries.values()) {
+      if (
+        delivery &&
+        delivery.endpointId === endpointId &&
+        delivery.eventId === eventId
+      ) {
+        return delivery;
+      }
+    }
+
+    // 2. Search completed history (SUCCEEDED, DEAD_LETTER)
+    for (const delivery of this._history) {
+      if (
+        delivery &&
+        delivery.endpointId === endpointId &&
+        delivery.eventId === eventId
+      ) {
+        return delivery;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Checks whether a delivery already exists for a given endpoint and event ID.
+   *
+   * @param {string} endpointId
+   * @param {string} eventId
+   * @returns {boolean}
+   */
+  hasDelivery(endpointId, eventId) {
+    return Boolean(this.findDeliveryByEventId(endpointId, eventId));
+  }
+
+  /**
    * Enqueues an event for a target endpoint.
+   * Atomically enforces queue-level idempotency by (endpointId, eventId).
    *
    * @param {object} params
    * @param {string} params.endpointId - ID of target endpoint
@@ -251,8 +328,17 @@ class DeliveryQueue {
       throw new Error("eventType is required to enqueue a delivery.");
     }
 
-    const deliveryId = generateDeliveryId();
+    this._ensureLoadedSync();
+
     const eventId = params.eventId || generateEventId();
+
+    // Idempotency check: preserve existing delivery if (endpointId, eventId) already exists
+    const existing = this.findDeliveryByEventId(params.endpointId, eventId);
+    if (existing) {
+      return sanitizeDelivery(existing);
+    }
+
+    const deliveryId = generateDeliveryId();
     const now = Date.now();
     const isoNow = new Date(now).toISOString();
 
@@ -302,7 +388,7 @@ class DeliveryQueue {
     this._deliveries.set(deliveryId, delivery);
     this._saveQueue();
 
-    if (!this._shuttingDown) {
+    if (!this._shuttingDown && this.autoProcess) {
       this.processQueue();
     }
 
@@ -476,7 +562,7 @@ class DeliveryQueue {
       }
 
       // Continue queue loop
-      if (!this._shuttingDown) {
+      if (!this._shuttingDown && this.autoProcess) {
         this.processQueue();
       }
     }

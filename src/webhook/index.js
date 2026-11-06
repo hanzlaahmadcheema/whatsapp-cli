@@ -8,6 +8,8 @@ const http = require("./http");
 const queue = require("./queue");
 const ingestion = require("./ingestion");
 const profiles = require("./profiles");
+const checkpointStore = require("./checkpoint-store");
+const recovery = require("./recovery");
 
 module.exports = {
   ...constants,
@@ -18,4 +20,6 @@ module.exports = {
   ...queue,
   ...ingestion,
   ...profiles,
+  ...checkpointStore,
+  ...recovery,
 };

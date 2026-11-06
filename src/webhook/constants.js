@@ -7,6 +7,7 @@ const DEFAULT_WEBHOOK_DIR = path.join(paths.dataDir, "webhooks");
 const DEFAULT_ENDPOINTS_FILE = "endpoints.json";
 const DEFAULT_QUEUE_FILE = "queue.json";
 const DEFAULT_HISTORY_FILE = "history.json";
+const DEFAULT_CHECKPOINTS_FILE = "recovery_checkpoints.json";
 
 const WEBHOOK_EVENTS = Object.freeze([
   "message.received",
@@ -90,6 +91,7 @@ module.exports = {
   DEFAULT_ENDPOINTS_FILE,
   DEFAULT_QUEUE_FILE,
   DEFAULT_HISTORY_FILE,
+  DEFAULT_CHECKPOINTS_FILE,
   WEBHOOK_EVENTS,
   WEBHOOK_HEADERS,
   DELIVERY_STATUS,

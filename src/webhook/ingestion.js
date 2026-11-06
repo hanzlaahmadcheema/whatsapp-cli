@@ -3,6 +3,8 @@
 const { WEBHOOK_EVENTS } = require("./constants");
 const { normalizePrivacy } = require("./types");
 const defaultStore = require("./store");
+const { CheckpointStore } = require("./checkpoint-store");
+const { MessageRecoveryCoordinator } = require("./recovery");
 
 /**
  * Converts numeric WhatsApp message ACK into standard human-readable name.
@@ -401,6 +403,20 @@ class WebhookBridge {
     this.maxSeen = options.maxSeen || 5000;
     this.lastState = null;
 
+    // Checkpoint store and offline recovery
+    this.checkpointStore =
+      options.checkpointStore ||
+      new CheckpointStore({ dataDir: this.dataDir });
+    this.recoveryCoordinator =
+      options.recoveryCoordinator !== undefined
+        ? options.recoveryCoordinator
+        : new MessageRecoveryCoordinator({
+            bridge: this,
+            service: this.service,
+            checkpointStore: this.checkpointStore,
+            dataDir: this.dataDir,
+          });
+
     // Subscriptions
     this._unsubService = null;
     this._clientListeners = [];
@@ -413,6 +429,18 @@ class WebhookBridge {
   start() {
     if (this._started) return;
     this._started = true;
+
+    // 0. Load recovery checkpoints and start recovery coordinator
+    if (this.checkpointStore && typeof this.checkpointStore.load === "function") {
+      try {
+        this.checkpointStore.load();
+      } catch (_) {}
+    }
+    if (this.recoveryCoordinator && typeof this.recoveryCoordinator.start === "function") {
+      try {
+        this.recoveryCoordinator.start();
+      } catch (_) {}
+    }
 
     // 1. Subscribe to WhatsAppService event broadcaster
     if (this.service && typeof this.service.subscribe === "function") {
@@ -561,6 +589,12 @@ class WebhookBridge {
     if (!this._started) return;
     this._started = false;
 
+    if (this.recoveryCoordinator && typeof this.recoveryCoordinator.stop === "function") {
+      try {
+        this.recoveryCoordinator.stop();
+      } catch (_) {}
+    }
+
     if (this._unsubService) {
       this._unsubService();
       this._unsubService = null;
@@ -621,22 +655,37 @@ class WebhookBridge {
         : summary.id;
     if (!messageId) return;
 
-    const accountInfo = resolveAccountInfo(this, options);
-
-    // Centralized eligibility filter before queue insertion
-    if (!isIncomingMessageEligible(summary, accountInfo)) {
-      return;
-    }
-
     const eventType = "message.received";
     const dedupKey = `${eventType}:${messageId}`;
 
-    if (this.isDuplicate(dedupKey)) {
+    if (
+      this.isDuplicate(dedupKey) ||
+      (this.checkpointStore && this.checkpointStore.isMessageProcessed(messageId))
+    ) {
       return;
     }
     this.markSeen(dedupKey);
 
+    const accountInfo = resolveAccountInfo(this, options);
     const timestamp = summary.timestamp || Math.floor(Date.now() / 1000);
+    const chatId =
+      summary.chatId ||
+      summary.from ||
+      (typeof summary.id === "object" ? summary.id?.remote : null);
+
+    // Centralized eligibility filter before queue insertion
+    if (!isIncomingMessageEligible(summary, accountInfo)) {
+      if (this.checkpointStore) {
+        this.checkpointStore.markMessageProcessed(messageId, timestamp);
+        if (chatId) {
+          this.checkpointStore.updateChatCheckpoint(chatId, {
+            lastMessageId: messageId,
+            lastTimestamp: timestamp,
+          });
+        }
+      }
+      return;
+    }
 
     // Extract structured mentions
     const rawMentions =
@@ -729,6 +778,17 @@ class WebhookBridge {
         });
 
         this.dispatchToSubscribers("media.received", mediaPayload);
+      }
+    }
+
+    // 3. Mark processed and update checkpoint
+    if (this.checkpointStore) {
+      this.checkpointStore.markMessageProcessed(messageId, timestamp);
+      if (chatId) {
+        this.checkpointStore.updateChatCheckpoint(chatId, {
+          lastMessageId: messageId,
+          lastTimestamp: timestamp,
+        });
       }
     }
   }
@@ -843,4 +903,6 @@ module.exports = {
   isEventEligible,
   resolveAccountInfo,
   WebhookBridge,
+  CheckpointStore,
+  MessageRecoveryCoordinator,
 };
