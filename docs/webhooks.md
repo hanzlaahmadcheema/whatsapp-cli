@@ -469,3 +469,67 @@ For OpenBot retries:
 2. On every retry attempt, the delivery ID and request body remain 100% identical.
 3. The engine generates a **fresh timestamp** and **fresh HMAC signature** on each attempt, ensuring the destination's 5-minute clock skew check succeeds regardless of backoff delay.
 
+---
+
+## 9. Universal Contact-Based Webhook Routing
+
+The Universal Webhook Engine supports contact-based event routing, enabling fine-grained traffic distribution across multiple independent webhook endpoints.
+
+### Precedence Policy
+
+When a qualifying incoming message or media event is received, destinations are determined by an explicit 5-step precedence policy:
+
+1. **Explicit Contact-to-Endpoint Mapping**: If an explicit rule matches the sender identity, delivery routes directly to that assigned endpoint.
+2. **Endpoint Exclusion Rules**: Non-explicit endpoints matching exclusion filters are strictly removed from consideration (exclusion overrides allowlist matches).
+3. **Endpoint Allowlist Matching**: Endpoints specifying an allowlist that includes the sender identity are matched. Deterministic tie-breaking prevents accidental fan-out.
+4. **Configured Fallback Endpoint**: If no explicit or allowlist rule matched and fallback is enabled, the event routes to the configured default fallback endpoint.
+5. **No Delivery**: If no eligible destination exists and fallback is disabled, no delivery is enqueued.
+
+> [!NOTE]
+> **Backward Compatibility**: If no routing configuration exists (no explicit rules, no endpoint allowlists/exclusions, and no fallback), the engine preserves default broadcast behavior to all subscribed endpoints.
+
+### Sender Identification and Normalization
+
+Sender identities are normalized across formats:
+- **Phone Numbers**: Formatted phone numbers (`+1 (555) 234-5678`, `15552345678`) match canonical JIDs (`15552345678@c.us`) and digit strings bidirectionally.
+- **WhatsApp LIDs**: Account LIDs (`123456789012345@lid`) match LID rules.
+- **Group Chats**: In group messages mentioning Tapu, the sender author JID is evaluated for routing.
+
+### CLI Usage
+
+```bash
+# 1. View all routing rules, endpoint filters, and fallback
+wa webhook route list
+
+# 2. Add an explicit contact mapping
+wa webhook route add 15551234567 wh_4cd9c471780a6e2385c172b7 --name "VIP Client" --priority 10
+
+# 3. Configure per-endpoint allowlists and exclusions
+wa webhook route endpoint wh_4cd9c471780a6e2385c172b7 --allow 15551111111,15552222222 --exclude 15559999999
+
+# 4. Configure default fallback endpoint
+wa webhook route fallback wh_0c50b4fb8dfa46146f05c9ed
+
+# 5. Disable fallback routing
+wa webhook route fallback --disable
+
+# 6. Update or delete an explicit rule
+wa webhook route update route_abc123 --priority 20 --disable
+wa webhook route delete route_abc123
+```
+
+### REST API Endpoints
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| `GET` | `/webhooks/routes` | Overview of all explicit rules, endpoint filters, and fallback |
+| `POST` | `/webhooks/routes` | Add explicit contact mapping `{ contact, endpointId, priority, name }` |
+| `GET` | `/webhooks/routes/:id` | Get explicit rule details |
+| `PATCH` | `/webhooks/routes/:id` | Update rule properties (`contact`, `endpointId`, `priority`, `enabled`) |
+| `DELETE` | `/webhooks/routes/:id` | Delete routing rule |
+| `GET` | `/webhooks/routes/fallback` | Get fallback endpoint configuration |
+| `POST` | `/webhooks/routes/fallback` | Set fallback endpoint `{ endpointId, enabled }` |
+| `GET` | `/webhooks/routes/endpoints/:id` | Get endpoint allowlist and exclusion rules |
+| `POST` | `/webhooks/routes/endpoints/:id` | Set endpoint allowlist and exclusion `{ allowlist, exclusion }` |
+
+

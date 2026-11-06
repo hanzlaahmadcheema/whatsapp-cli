@@ -10,6 +10,7 @@ const ingestion = require("./ingestion");
 const profiles = require("./profiles");
 const checkpointStore = require("./checkpoint-store");
 const recovery = require("./recovery");
+const router = require("./router");
 
 module.exports = {
   ...constants,
@@ -22,4 +23,5 @@ module.exports = {
   ...profiles,
   ...checkpointStore,
   ...recovery,
+  ...router,
 };

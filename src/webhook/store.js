@@ -146,6 +146,19 @@ function createEndpoint(data = {}, customDir) {
   const events = normalizeEvents(data.events);
   const privacy = normalizePrivacy(data.privacy);
   const profile = normalizeProfile(data.profile);
+  const routing = data.routing
+    ? {
+        allowlist: Array.isArray(data.routing.allowlist)
+          ? data.routing.allowlist
+          : [],
+        exclusion: Array.isArray(data.routing.exclusion)
+          ? data.routing.exclusion
+          : [],
+      }
+    : {
+        allowlist: Array.isArray(data.allowlist) ? data.allowlist : [],
+        exclusion: Array.isArray(data.exclusion) ? data.exclusion : [],
+      };
 
   const endpoints = loadEndpoints(customDir);
 
@@ -164,6 +177,7 @@ function createEndpoint(data = {}, customDir) {
     existing.privacy = privacy;
     existing.security = security;
     existing.profile = profile;
+    existing.routing = routing;
     if (data.enabled !== undefined) {
       existing.enabled = Boolean(data.enabled);
     }
@@ -196,6 +210,7 @@ function createEndpoint(data = {}, customDir) {
     enabled: data.enabled !== undefined ? Boolean(data.enabled) : true,
     privacy,
     security,
+    routing,
     createdAt: now,
     updatedAt: now,
   };
@@ -270,6 +285,25 @@ function updateEndpoint(id, updates = {}, customDir) {
       ? normalizeProfile(updates.profile)
       : normalizeProfile(current.profile);
 
+  let updatedRouting = current.routing || { allowlist: [], exclusion: [] };
+  if (updates.routing && typeof updates.routing === "object") {
+    updatedRouting = {
+      allowlist: Array.isArray(updates.routing.allowlist)
+        ? updates.routing.allowlist
+        : updatedRouting.allowlist,
+      exclusion: Array.isArray(updates.routing.exclusion)
+        ? updates.routing.exclusion
+        : updatedRouting.exclusion,
+    };
+  } else {
+    if (updates.allowlist !== undefined && Array.isArray(updates.allowlist)) {
+      updatedRouting = { ...updatedRouting, allowlist: updates.allowlist };
+    }
+    if (updates.exclusion !== undefined && Array.isArray(updates.exclusion)) {
+      updatedRouting = { ...updatedRouting, exclusion: updates.exclusion };
+    }
+  }
+
   const updated = {
     ...current,
     url: updatedUrl,
@@ -279,6 +313,7 @@ function updateEndpoint(id, updates = {}, customDir) {
     enabled: updatedEnabled,
     privacy: updatedPrivacy,
     security: updatedSecurity,
+    routing: updatedRouting,
     updatedAt: new Date().toISOString(),
   };
 

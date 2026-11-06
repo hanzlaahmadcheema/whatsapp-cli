@@ -12,6 +12,16 @@ const {
   DeliveryQueue,
   dispatchWebhookRequest,
   generateEventId,
+  addRule,
+  updateRule,
+  deleteRule,
+  getRule,
+  listRules,
+  setFallback,
+  getFallback,
+  setEndpointRules,
+  getEndpointRules,
+  loadRoutingConfig,
 } = require("../webhook");
 
 /**
@@ -151,6 +161,124 @@ async function handleWebhookRoute(server, req, res, pathname, method) {
       res,
       404,
       fail("NOT_FOUND", `No delivery route for ${method} ${pathname}`)
+    );
+  }
+
+  // 6.5. Match /webhooks/routes routes
+  const routesPrefix = "/webhooks/routes";
+  if (pathname === routesPrefix || pathname.startsWith(routesPrefix + "/")) {
+    const subPath = pathname.slice(routesPrefix.length);
+
+    // GET /webhooks/routes - Overview / list of all rules and config
+    if ((subPath === "" || subPath === "/") && method === "GET") {
+      try {
+        const config = loadRoutingConfig(queue.dataDir);
+        return server.json(res, 200, ok(config));
+      } catch (err) {
+        return server.json(res, 500, fail("ROUTING_ERROR", err.message));
+      }
+    }
+
+    // POST /webhooks/routes - Add an explicit rule
+    if ((subPath === "" || subPath === "/") && method === "POST") {
+      return server.withBody(req, res, async (body) => {
+        try {
+          const rule = addRule(body || {}, queue.dataDir);
+          return server.json(res, 201, ok({ rule }));
+        } catch (err) {
+          return server.json(res, 400, fail("VALIDATION_ERROR", err.message));
+        }
+      });
+    }
+
+    // Fallback routes: /webhooks/routes/fallback
+    if (subPath === "/fallback") {
+      if (method === "GET") {
+        try {
+          const fallback = getFallback(queue.dataDir);
+          return server.json(res, 200, ok({ fallback }));
+        } catch (err) {
+          return server.json(res, 500, fail("ROUTING_ERROR", err.message));
+        }
+      }
+      if (method === "POST" || method === "PUT") {
+        return server.withBody(req, res, async (body) => {
+          try {
+            const fallback = setFallback(body || {}, queue.dataDir);
+            return server.json(res, 200, ok({ fallback }));
+          } catch (err) {
+            return server.json(res, 400, fail("VALIDATION_ERROR", err.message));
+          }
+        });
+      }
+    }
+
+    // Per-endpoint rules: /webhooks/routes/endpoints/:endpointId
+    if (subPath.startsWith("/endpoints/")) {
+      const epId = subPath.slice("/endpoints/".length);
+      if (!epId) {
+        return server.json(res, 400, fail("BAD_REQUEST", "Missing endpoint ID."));
+      }
+      if (method === "GET") {
+        try {
+          const rules = getEndpointRules(epId, queue.dataDir);
+          return server.json(res, 200, ok({ endpointId: epId, ...rules }));
+        } catch (err) {
+          return server.json(res, 500, fail("ROUTING_ERROR", err.message));
+        }
+      }
+      if (method === "POST" || method === "PUT") {
+        return server.withBody(req, res, async (body) => {
+          try {
+            const rules = setEndpointRules(epId, body || {}, queue.dataDir);
+            return server.json(res, 200, ok(rules));
+          } catch (err) {
+            return server.json(res, 400, fail("VALIDATION_ERROR", err.message));
+          }
+        });
+      }
+    }
+
+    // Specific rule by ID: /webhooks/routes/:id
+    const ruleId = subPath.slice(1);
+    if (ruleId && !ruleId.includes("/")) {
+      if (method === "GET") {
+        const rule = getRule(ruleId, queue.dataDir);
+        if (!rule) {
+          return server.json(
+            res,
+            404,
+            fail("NOT_FOUND", `Routing rule not found: "${ruleId}"`)
+          );
+        }
+        return server.json(res, 200, ok({ rule }));
+      }
+      if (method === "PATCH" || method === "PUT") {
+        return server.withBody(req, res, async (body) => {
+          try {
+            const updated = updateRule(ruleId, body || {}, queue.dataDir);
+            return server.json(res, 200, ok({ rule: updated }));
+          } catch (err) {
+            const status = err.message.includes("not found") ? 404 : 400;
+            return server.json(res, status, fail("UPDATE_ERROR", err.message));
+          }
+        });
+      }
+      if (method === "DELETE") {
+        try {
+          const deleted = deleteRule(ruleId, queue.dataDir);
+          return server.json(res, 200, ok({ deleted: true, id: deleted.id }));
+        } catch (err) {
+          const status = err.message.includes("not found") ? 404 : 400;
+          return server.json(res, status, fail("DELETE_ERROR", err.message));
+        }
+      }
+    }
+
+    return server.json(
+      res,
+      404,
+      fail("NOT_FOUND", `No routing route for ${method} ${pathname}`)
     );
   }
 

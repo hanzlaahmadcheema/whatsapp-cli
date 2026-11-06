@@ -5,6 +5,7 @@ const { normalizePrivacy } = require("./types");
 const defaultStore = require("./store");
 const { CheckpointStore } = require("./checkpoint-store");
 const { MessageRecoveryCoordinator } = require("./recovery");
+const { WebhookRouter } = require("./router");
 
 /**
  * Converts numeric WhatsApp message ACK into standard human-readable name.
@@ -416,6 +417,14 @@ class WebhookBridge {
             checkpointStore: this.checkpointStore,
             dataDir: this.dataDir,
           });
+
+    // Router for contact-based webhook routing
+    this.router =
+      options.router ||
+      new WebhookRouter({
+        dataDir: this.dataDir,
+        store: this.store,
+      });
 
     // Subscriptions
     this._unsubService = null;
@@ -844,7 +853,23 @@ class WebhookBridge {
 
     if (!endpoints || endpoints.length === 0) return;
 
-    for (const ep of endpoints) {
+    // Apply Universal Contact-Based Webhook Routing
+    let targetEndpoints = endpoints;
+    if (this.router && typeof this.router.resolveDestinations === "function") {
+      try {
+        targetEndpoints = this.router.resolveDestinations(
+          payload,
+          endpoints,
+          this.dataDir
+        );
+      } catch (_) {
+        targetEndpoints = endpoints;
+      }
+    }
+
+    if (!targetEndpoints || targetEndpoints.length === 0) return;
+
+    for (const ep of targetEndpoints) {
       // 1. Strict boundary: Disabled endpoints receive nothing
       if (!ep.enabled) continue;
 
@@ -905,4 +930,5 @@ module.exports = {
   WebhookBridge,
   CheckpointStore,
   MessageRecoveryCoordinator,
+  WebhookRouter,
 };

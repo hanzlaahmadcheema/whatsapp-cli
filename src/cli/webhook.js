@@ -89,6 +89,9 @@ async function cmdWebhook(argv) {
     case "clean":
     case "prune":
       return webhookClean(flags);
+    case "route":
+    case "routes":
+      return webhookRoute(restPositional, flags);
     case "help":
     default:
       return webhookHelp();
@@ -472,6 +475,220 @@ async function webhookSetSecret(id, flags) {
   }
 }
 
+async function webhookRoute(positional, flags) {
+  const action = (positional[0] || "list").toLowerCase();
+  const rest = positional.slice(1);
+  const { base, token } = await getClient();
+  const routesUrl = `${ROUTES.WEBHOOKS}/routes`;
+
+  if (action === "list" || action === "ls") {
+    const res = await request(base, token, "GET", routesUrl);
+    if (!res.ok) {
+      console.error(`${EMOJI.fail} ${pc.red(res.error?.message || "Failed to list routing rules")}`);
+      process.exit(1);
+    }
+
+    console.log(header("Universal Webhook Routing Configuration"));
+
+    // 1. Explicit contact rules
+    const rules = res.rules || [];
+    console.log(section("Explicit Contact Rules"));
+    if (rules.length === 0) {
+      console.log(pc.dim("  No explicit contact rules defined.\n"));
+    } else {
+      const rows = [
+        [
+          pc.bold("RULE ID"),
+          pc.bold("CONTACT"),
+          pc.bold("TARGET ENDPOINT"),
+          pc.bold("PRIORITY"),
+          pc.bold("STATUS"),
+          pc.bold("NAME"),
+        ],
+      ];
+      for (const r of rules) {
+        rows.push([
+          pc.cyan(r.id),
+          r.rawContact || r.contact,
+          r.endpointId,
+          String(r.priority || 0),
+          r.enabled ? pc.green("enabled") : pc.dim("disabled"),
+          r.name || pc.dim("-"),
+        ]);
+      }
+      console.log(table(rows) + "\n");
+    }
+
+    // 2. Per-endpoint allowlists and exclusions
+    const endpointRules = res.endpointRules || {};
+    const epKeys = Object.keys(endpointRules);
+    console.log(section("Endpoint Allow & Exclusion Rules"));
+    if (epKeys.length === 0) {
+      console.log(pc.dim("  No per-endpoint allow/exclusion rules defined.\n"));
+    } else {
+      for (const epId of epKeys) {
+        const er = endpointRules[epId];
+        console.log(`  ${pc.cyan(epId)}:`);
+        if (er.allowlist && er.allowlist.length > 0) {
+          console.log(`    Allowlist: ${er.allowlist.join(", ")}`);
+        }
+        if (er.exclusion && er.exclusion.length > 0) {
+          console.log(`    Exclusion: ${pc.red(er.exclusion.join(", "))}`);
+        }
+      }
+      console.log("");
+    }
+
+    // 3. Fallback configuration
+    const fallback = res.fallback || {};
+    console.log(section("Fallback Configuration"));
+    console.log(pair("Fallback Endpoint", fallback.endpointId ? pc.cyan(fallback.endpointId) : pc.dim("None configured")));
+    console.log(pair("Status", fallback.enabled ? pc.green("enabled") : pc.dim("disabled")));
+    console.log("");
+    return;
+  }
+
+  if (action === "add" || action === "create") {
+    const contact = rest[0] || flags.contact;
+    const endpointId = rest[1] || flags.endpoint || flags.endpointId;
+
+    if (!contact || !endpointId) {
+      console.error(`${EMOJI.fail} ${pc.red("Contact and endpointId are required.")}`);
+      console.error(`Usage: ${pc.cyan("wa webhook route add <contact> <endpointId> [--priority <n>] [--name <str>]")}`);
+      process.exit(1);
+    }
+
+    const payload = {
+      contact,
+      endpointId,
+      priority: flags.priority ? parseInt(flags.priority, 10) : 0,
+      name: flags.name || null,
+      enabled: flags.disabled ? false : true,
+    };
+
+    const res = await request(base, token, "POST", routesUrl, payload);
+    if (!res.ok) {
+      console.error(`${EMOJI.fail} ${pc.red(res.error?.message || "Failed to add routing rule")}`);
+      process.exit(1);
+    }
+
+    const rule = res.rule;
+    console.log(`\n${EMOJI.ok} ${pc.green("Routing rule added successfully!")}\n`);
+    console.log(pair("Rule ID", pc.cyan(rule.id)));
+    console.log(pair("Contact", rule.rawContact || rule.contact));
+    console.log(pair("Endpoint ID", rule.endpointId));
+    console.log(pair("Priority", String(rule.priority)));
+    console.log(pair("Status", rule.enabled ? pc.green("enabled") : pc.dim("disabled")));
+    console.log("");
+    return;
+  }
+
+  if (action === "update") {
+    const id = rest[0];
+    if (!id) {
+      console.error(`${EMOJI.fail} ${pc.red("Rule ID is required.")}`);
+      console.error(`Usage: ${pc.cyan("wa webhook route update <id> [--contact <contact>] [--endpoint <id>] [--priority <n>] [--enable|--disable]")}`);
+      process.exit(1);
+    }
+
+    const payload = {};
+    if (flags.contact) payload.contact = flags.contact;
+    if (flags.endpoint || flags.endpointId) payload.endpointId = flags.endpoint || flags.endpointId;
+    if (flags.priority !== undefined) payload.priority = parseInt(flags.priority, 10);
+    if (flags.name !== undefined) payload.name = flags.name;
+    if (flags.enable) payload.enabled = true;
+    if (flags.disable || flags.disabled) payload.enabled = false;
+
+    const res = await request(base, token, "PATCH", `${routesUrl}/${id}`, payload);
+    if (!res.ok) {
+      console.error(`${EMOJI.fail} ${pc.red(res.error?.message || "Failed to update routing rule")}`);
+      process.exit(1);
+    }
+
+    console.log(`\n${EMOJI.ok} ${pc.green("Routing rule updated successfully!")}\n`);
+    return;
+  }
+
+  if (action === "delete" || action === "rm" || action === "remove") {
+    const id = rest[0];
+    if (!id) {
+      console.error(`${EMOJI.fail} ${pc.red("Rule ID is required.")}`);
+      console.error(`Usage: ${pc.cyan("wa webhook route delete <id>")}`);
+      process.exit(1);
+    }
+
+    const res = await request(base, token, "DELETE", `${routesUrl}/${id}`);
+    if (!res.ok) {
+      console.error(`${EMOJI.fail} ${pc.red(res.error?.message || "Failed to delete routing rule")}`);
+      process.exit(1);
+    }
+
+    console.log(`\n${EMOJI.ok} ${pc.green(`Routing rule "${id}" deleted.`)}\n`);
+    return;
+  }
+
+  if (action === "fallback") {
+    const endpointId = rest[0];
+    const enabled = flags.disable ? false : true;
+
+    if (!endpointId && !flags.disable) {
+      console.error(`${EMOJI.fail} ${pc.red("Endpoint ID is required for fallback.")}`);
+      console.error(`Usage: ${pc.cyan("wa webhook route fallback <endpointId> [--disable]")}`);
+      process.exit(1);
+    }
+
+    const payload = {
+      endpointId: endpointId || null,
+      enabled: endpointId ? enabled : false,
+    };
+
+    const res = await request(base, token, "POST", `${routesUrl}/fallback`, payload);
+    if (!res.ok) {
+      console.error(`${EMOJI.fail} ${pc.red(res.error?.message || "Failed to configure fallback endpoint")}`);
+      process.exit(1);
+    }
+
+    console.log(`\n${EMOJI.ok} ${pc.green("Fallback endpoint configured successfully!")}\n`);
+    console.log(pair("Fallback Endpoint", res.fallback?.endpointId ? pc.cyan(res.fallback.endpointId) : pc.dim("None")));
+    console.log(pair("Status", res.fallback?.enabled ? pc.green("enabled") : pc.dim("disabled")));
+    console.log("");
+    return;
+  }
+
+  if (action === "endpoint") {
+    const endpointId = rest[0];
+    if (!endpointId) {
+      console.error(`${EMOJI.fail} ${pc.red("Endpoint ID is required.")}`);
+      console.error(`Usage: ${pc.cyan("wa webhook route endpoint <endpointId> [--allow <contacts>] [--exclude <contacts>]")}`);
+      process.exit(1);
+    }
+
+    const payload = {};
+    if (flags.allow) {
+      payload.allowlist = flags.allow.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+    if (flags.exclude) {
+      payload.exclusion = flags.exclude.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+
+    const res = await request(base, token, "POST", `${routesUrl}/endpoints/${endpointId}`, payload);
+    if (!res.ok) {
+      console.error(`${EMOJI.fail} ${pc.red(res.error?.message || "Failed to configure endpoint rules")}`);
+      process.exit(1);
+    }
+
+    console.log(`\n${EMOJI.ok} ${pc.green(`Rules updated for endpoint "${endpointId}".`)}\n`);
+    if (res.allowlist) console.log(pair("Allowlist", res.allowlist.join(", ") || pc.dim("Empty")));
+    if (res.exclusion) console.log(pair("Exclusion", pc.red(res.exclusion.join(", ")) || pc.dim("Empty")));
+    console.log("");
+    return;
+  }
+
+  console.error(`${EMOJI.fail} ${pc.red(`Unknown route action: "${action}"`)}`);
+  console.error(`Supported actions: list, add, update, delete, fallback, endpoint`);
+  process.exit(1);
+}
+
 function webhookHelp() {
   console.log(`
 ${pc.bold("Usage:")} wa webhook <command> [options]
@@ -489,6 +706,15 @@ ${pc.bold("Commands:")}
   ${pc.cyan("retry")} <deliveryId>    Manually retry a failed or dead-letter delivery
   ${pc.cyan("stats")}                 View queue throughput and health statistics
   ${pc.cyan("clean")}                 Prune old delivery history records
+  ${pc.cyan("route")} <action>        Manage contact-based webhook routing rules
+
+${pc.bold("Route Actions:")}
+  wa webhook route list                      List all contact rules, endpoint filters, and fallback
+  wa webhook route add <contact> <epId>      Add explicit contact-to-endpoint routing rule
+  wa webhook route update <id> [options]     Update explicit routing rule
+  wa webhook route delete <id>               Delete a routing rule
+  wa webhook route fallback <epId>           Configure default fallback endpoint
+  wa webhook route endpoint <epId>           Configure per-endpoint allowlist & exclusion rules
 
 ${pc.bold("Options:")}
   --profile <profile> Signing profile: "generic" (default) or "openbot"

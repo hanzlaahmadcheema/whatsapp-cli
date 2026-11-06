@@ -8,6 +8,7 @@ const DEFAULT_ENDPOINTS_FILE = "endpoints.json";
 const DEFAULT_QUEUE_FILE = "queue.json";
 const DEFAULT_HISTORY_FILE = "history.json";
 const DEFAULT_CHECKPOINTS_FILE = "recovery_checkpoints.json";
+const DEFAULT_ROUTES_FILE = "routes.json";
 
 const WEBHOOK_EVENTS = Object.freeze([
   "message.received",
@@ -92,6 +93,7 @@ module.exports = {
   DEFAULT_QUEUE_FILE,
   DEFAULT_HISTORY_FILE,
   DEFAULT_CHECKPOINTS_FILE,
+  DEFAULT_ROUTES_FILE,
   WEBHOOK_EVENTS,
   WEBHOOK_HEADERS,
   DELIVERY_STATUS,
