@@ -407,6 +407,47 @@ async function handleWebhookRoute(server, req, res, pathname, method) {
     }
   }
 
+  // 17. POST /webhooks/recover or /webhooks/reconcile - Trigger offline message recovery
+  if (
+    (pathname === "/webhooks/recover" || pathname === "/webhooks/reconcile") &&
+    method === "POST"
+  ) {
+    const bridge =
+      typeof server.getWebhookBridge === "function"
+        ? server.getWebhookBridge()
+        : server._webhookBridge;
+    if (!bridge || !bridge.recoveryCoordinator) {
+      return server.json(
+        res,
+        503,
+        fail("NOT_READY", "Webhook bridge recovery coordinator not available")
+      );
+    }
+    try {
+      const result = await bridge.recoveryCoordinator.reconcile();
+      return server.json(res, 200, ok(result));
+    } catch (err) {
+      return server.json(res, 500, fail("RECOVERY_ERROR", err.message));
+    }
+  }
+
+  // 18. GET /webhooks/recovery/status - Recovery coordinator status
+  if (pathname === "/webhooks/recovery/status" && method === "GET") {
+    const bridge =
+      typeof server.getWebhookBridge === "function"
+        ? server.getWebhookBridge()
+        : server._webhookBridge;
+    if (!bridge || !bridge.recoveryCoordinator) {
+      return server.json(
+        res,
+        503,
+        fail("NOT_READY", "Webhook bridge recovery coordinator not available")
+      );
+    }
+    const status = bridge.recoveryCoordinator.getStatus();
+    return server.json(res, 200, ok(status));
+  }
+
   return server.json(
     res,
     404,

@@ -149,6 +149,11 @@ class CheckpointStore {
     }
   }
 
+  getLastReconciledAt() {
+    if (!this._loaded) this.load();
+    return this.data.lastReconciledAt || null;
+  }
+
   setLastReconciledAt(ts = new Date().toISOString()) {
     if (!this._loaded) this.load();
     this.data.lastReconciledAt = ts;

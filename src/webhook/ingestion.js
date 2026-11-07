@@ -686,7 +686,7 @@ class WebhookBridge {
     if (!isIncomingMessageEligible(summary, accountInfo)) {
       if (this.checkpointStore) {
         this.checkpointStore.markMessageProcessed(messageId, timestamp);
-        if (chatId) {
+        if (chatId && !summary.fromMe) {
           this.checkpointStore.updateChatCheckpoint(chatId, {
             lastMessageId: messageId,
             lastTimestamp: timestamp,

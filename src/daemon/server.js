@@ -57,6 +57,13 @@ class DaemonServer {
     this.server = null;
   }
 
+  getWebhookBridge() {
+    if (!this._webhookBridge && this.service) {
+      this.attachWebhookBridge();
+    }
+    return this._webhookBridge;
+  }
+
   getWebhookQueue() {
     if (!this._webhookQueue) {
       const { DeliveryQueue } = require("../webhook");

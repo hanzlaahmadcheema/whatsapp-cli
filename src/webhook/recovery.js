@@ -18,6 +18,11 @@ class MessageRecoveryCoordinator {
     this.options = {
       batchSize: options.batchSize || 50,
       maxCycleMessages: options.maxCycleMessages || 500,
+      sweepIntervalMs:
+        options.sweepIntervalMs !== undefined ? options.sweepIntervalMs : 30000,
+      autoSweep: options.autoSweep !== false,
+      activeChatSweepCount:
+        options.activeChatSweepCount !== undefined ? options.activeChatSweepCount : 10,
       ...options,
     };
 
@@ -26,6 +31,8 @@ class MessageRecoveryCoordinator {
     this._stopped = false;
     this._unsubService = null;
     this._readyDebounceTimer = null;
+    this._sweepInterval = null;
+    this._attachedClients = new WeakSet();
   }
 
   _getClient() {
@@ -39,12 +46,36 @@ class MessageRecoveryCoordinator {
     );
   }
 
+  _attachClientListeners(triggerReconcile) {
+    const client = this._getClient();
+    if (!client || typeof client.on !== "function") return;
+    if (this._attachedClients.has(client)) return;
+    this._attachedClients.add(client);
+
+    const onReconcile = () => triggerReconcile();
+
+    // Hook client reconnection and lifecycle events
+    client.on("change_state", (state) => {
+      if (state === "CONNECTED" || state === "RESUMING") {
+        triggerReconcile();
+      }
+    });
+    client.on("loading_screen", (percent) => {
+      if (percent === 100) {
+        triggerReconcile();
+      }
+    });
+    client.on("ready", onReconcile);
+  }
+
   start() {
     if (this._stopped) return;
     this.checkpointStore.load();
 
-    // Hook into service/controller readiness and recovery events
+    // Hook into service/controller readiness, recovery, and resume events
     const triggerReconcile = () => {
+      if (this._stopped) return;
+      this._attachClientListeners(triggerReconcile);
       if (this._readyDebounceTimer) clearTimeout(this._readyDebounceTimer);
       this._readyDebounceTimer = setTimeout(() => {
         this.reconcile().catch(() => {});
@@ -55,17 +86,42 @@ class MessageRecoveryCoordinator {
       if (typeof this.service.on === "function") {
         this.service.on("ready", triggerReconcile);
         this.service.on("recovery_success", triggerReconcile);
+        this.service.on("resume", triggerReconcile);
       }
       if (this.service.controller && typeof this.service.controller.on === "function") {
         this.service.controller.on("ready", triggerReconcile);
         this.service.controller.on("recovery_success", triggerReconcile);
+        this.service.controller.on("resumed", triggerReconcile);
+      }
+      if (this.service.sleepNotifier && typeof this.service.sleepNotifier.on === "function") {
+        this.service.sleepNotifier.on("resume", triggerReconcile);
       }
       if (typeof this.service.subscribe === "function") {
         this._unsubService = this.service.subscribe((rawEvent) => {
-          if (rawEvent && rawEvent.event === "state" && rawEvent.state === "ready") {
+          if (!rawEvent) return;
+          if (
+            rawEvent.event === "resume" ||
+            (rawEvent.event === "state" && rawEvent.state === "ready")
+          ) {
             triggerReconcile();
           }
         });
+      }
+    }
+
+    // Attach to client if already instantiated
+    this._attachClientListeners(triggerReconcile);
+
+    // Setup recurring background sweep interval (e.g. every 30s)
+    if (this.options.autoSweep && this.options.sweepIntervalMs > 0) {
+      if (this._sweepInterval) clearInterval(this._sweepInterval);
+      this._sweepInterval = setInterval(() => {
+        if (!this._stopped) {
+          this.reconcile().catch(() => {});
+        }
+      }, this.options.sweepIntervalMs);
+      if (typeof this._sweepInterval.unref === "function") {
+        this._sweepInterval.unref();
       }
     }
   }
@@ -76,10 +132,33 @@ class MessageRecoveryCoordinator {
       clearTimeout(this._readyDebounceTimer);
       this._readyDebounceTimer = null;
     }
+    if (this._sweepInterval) {
+      clearInterval(this._sweepInterval);
+      this._sweepInterval = null;
+    }
     if (this._unsubService) {
       this._unsubService();
       this._unsubService = null;
     }
+  }
+
+  getStatus() {
+    return {
+      bootstrapped: this.checkpointStore.isBootstrapped(),
+      lastReconciledAt:
+        typeof this.checkpointStore.getLastReconciledAt === "function"
+          ? this.checkpointStore.getLastReconciledAt()
+          : this.checkpointStore.data?.lastReconciledAt || null,
+      isReconciling: this._isReconciling,
+      chatCount: Object.keys(this.checkpointStore.data?.chats || {}).length,
+      processedMessagesCount: Object.keys(
+        this.checkpointStore.data?.processedMessageIds ||
+          this.checkpointStore.data?.processedMessages ||
+          {}
+      ).length,
+      autoSweep: this.options.autoSweep,
+      sweepIntervalMs: this.options.sweepIntervalMs,
+    };
   }
 
   /**
@@ -153,6 +232,9 @@ class MessageRecoveryCoordinator {
 
         // 2. Identify candidate chats that may contain un-reconciled messages
         const candidateChats = [];
+        const activeSweepCount = this.options.activeChatSweepCount || 10;
+        let checkedCount = 0;
+
         for (const chat of chats) {
           if (!chat) continue;
           const chatId = chat.id?._serialized || chat.id;
@@ -182,13 +264,24 @@ class MessageRecoveryCoordinator {
             const chatTs = Number(chat.timestamp) || 0;
             const cpTs = Number(cp.lastTimestamp) || 0;
             const unread = Number(chat.unreadCount) || 0;
+            const lastMsg = chat.lastMessage;
             const lastMsgId =
-              chat.lastMessage && (chat.lastMessage.id?._serialized || chat.lastMessage.id);
+              lastMsg && (lastMsg.id?._serialized || lastMsg.id);
+            const isLastMsgProcessed = lastMsgId
+              ? this.checkpointStore.isMessageProcessed(lastMsgId)
+              : true;
 
-            if (chatTs > cpTs || unread > 0 || (lastMsgId && lastMsgId !== cp.lastMessageId)) {
+            if (
+              chatTs > cpTs ||
+              unread > 0 ||
+              (lastMsgId && lastMsgId !== cp.lastMessageId) ||
+              !isLastMsgProcessed ||
+              checkedCount < activeSweepCount
+            ) {
               candidateChats.push(chat);
             }
           }
+          checkedCount++;
         }
 
         // Sort candidate chats by timestamp descending (most recently active first)

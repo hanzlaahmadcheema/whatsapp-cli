@@ -399,6 +399,58 @@ test("Webhook REST API queries deliveries, performs manual retry, reports stats,
   }
 });
 
+test("Daemon handles /webhooks/recover and /webhooks/recovery/status", async () => {
+  const tempDir = createTempDir();
+  const token = "api-token-test";
+  const authHeaders = { authorization: `Bearer ${token}` };
+
+  const service = {
+    subscribe: () => () => {},
+    broadcast: () => {},
+    client: {
+      getChats: async () => [],
+      getState: async () => "CONNECTED",
+      on: () => {},
+    },
+    on: () => {},
+  };
+
+  const server = new DaemonServer({
+    token,
+    port: 0,
+    webhookDataDir: tempDir,
+    service,
+  });
+
+  try {
+    const port = await server.start();
+    server.attachWebhookBridge();
+
+    const statusRes = await makeRequest(
+      port,
+      "GET",
+      "/webhooks/recovery/status",
+      null,
+      authHeaders
+    );
+    assert.equal(statusRes.status, 200);
+    assert.equal(typeof statusRes.body.bootstrapped, "boolean");
+
+    const recoverRes = await makeRequest(
+      port,
+      "POST",
+      "/webhooks/recover",
+      {},
+      authHeaders
+    );
+    assert.equal(recoverRes.status, 200);
+    assert.ok(recoverRes.body.status);
+  } finally {
+    server.stop();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 // -------------------------------------------------------------
 // 5. CLI Arguments & Command Parsing
 // -------------------------------------------------------------

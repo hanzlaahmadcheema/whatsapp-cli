@@ -1334,3 +1334,306 @@ test("13. Recovered message delivers to OpenBot endpoint with valid HMAC signatu
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+// -------------------------------------------------------------
+// Test 14: System resume event triggers reconciliation automatically
+// -------------------------------------------------------------
+test("14. System resume event triggers reconciliation automatically", async () => {
+  const tempDir = createTempDir();
+  let queue;
+  let bridge;
+
+  try {
+    queue = new DeliveryQueue({ dataDir: tempDir });
+    await queue.init({ autoProcess: false });
+
+    createEndpoint(
+      {
+        url: "https://example.com/webhook",
+        events: ["message.received"],
+      },
+      tempDir
+    );
+
+    const cpStore = new CheckpointStore({ dataDir: tempDir });
+    cpStore.load();
+    cpStore.setBootstrapped(true);
+    cpStore.save();
+
+    const missedMsg = createMockMsg({
+      id: "msg_resume_test_01",
+      from: "923001234567@c.us",
+      body: "Sent while sleeping",
+      timestamp: 1700000100,
+    });
+
+    const chat = createMockChat({
+      id: "923001234567@c.us",
+      name: "Bob",
+      messages: [missedMsg],
+    });
+
+    const service = createMockService({ chats: [chat] });
+    service.sleepNotifier = new EventEmitter();
+
+    bridge = new WebhookBridge({
+      service,
+      queue,
+      dataDir: tempDir,
+      account: mockTapuAccount,
+      checkpointStore: cpStore,
+    });
+
+    const coordinator = new MessageRecoveryCoordinator({
+      bridge,
+      service,
+      checkpointStore: cpStore,
+      dataDir: tempDir,
+      autoSweep: false,
+    });
+    coordinator.start();
+
+    // Trigger resume event on sleepNotifier
+    service.sleepNotifier.emit("resume");
+
+    // Wait for debounce (250ms) + reconciliation
+    await new Promise((r) => setTimeout(r, 400));
+
+    // Check delivery queue
+    const deliveries = queue.listDeliveries().deliveries;
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].payload.data.messageId, "msg_resume_test_01");
+
+    coordinator.stop();
+  } finally {
+    if (bridge) bridge.stop();
+    if (queue) await queue.shutdown();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// -------------------------------------------------------------
+// Test 15: WhatsApp client reconnect triggers reconciliation
+// -------------------------------------------------------------
+test("15. WhatsApp client reconnect (change_state CONNECTED) triggers reconciliation", async () => {
+  const tempDir = createTempDir();
+  let queue;
+  let bridge;
+
+  try {
+    queue = new DeliveryQueue({ dataDir: tempDir });
+    await queue.init({ autoProcess: false });
+
+    createEndpoint(
+      {
+        url: "https://example.com/webhook",
+        events: ["message.received"],
+      },
+      tempDir
+    );
+
+    const cpStore = new CheckpointStore({ dataDir: tempDir });
+    cpStore.load();
+    cpStore.setBootstrapped(true);
+    cpStore.save();
+
+    const missedMsg = createMockMsg({
+      id: "msg_reconnect_test_01",
+      from: "923001234567@c.us",
+      body: "Sent while network was offline",
+      timestamp: 1700000200,
+    });
+
+    const chat = createMockChat({
+      id: "923001234567@c.us",
+      name: "Charlie",
+      messages: [missedMsg],
+    });
+
+    const client = new EventEmitter();
+    client.getChats = async () => [chat];
+    client.getState = async () => "CONNECTED";
+
+    const service = createMockService({ chats: [chat], client });
+
+    bridge = new WebhookBridge({
+      service,
+      queue,
+      dataDir: tempDir,
+      account: mockTapuAccount,
+      checkpointStore: cpStore,
+    });
+
+    const coordinator = new MessageRecoveryCoordinator({
+      bridge,
+      service,
+      client,
+      checkpointStore: cpStore,
+      dataDir: tempDir,
+      autoSweep: false,
+    });
+    coordinator.start();
+
+    // Simulate WhatsApp Web WebSocket reconnect
+    client.emit("change_state", "CONNECTED");
+
+    // Wait for debounce (250ms) + reconciliation
+    await new Promise((r) => setTimeout(r, 400));
+
+    // Check delivery queue
+    const deliveries = queue.listDeliveries().deliveries;
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].payload.data.messageId, "msg_reconnect_test_01");
+
+    coordinator.stop();
+  } finally {
+    if (bridge) bridge.stop();
+    if (queue) await queue.shutdown();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// -------------------------------------------------------------
+// Test 16: Periodic auto-sweep sweeps chats and recovers missed messages
+// -------------------------------------------------------------
+test("16. Periodic auto-sweep sweeps chats and recovers missed messages", async () => {
+  const tempDir = createTempDir();
+  let queue;
+  let bridge;
+
+  try {
+    queue = new DeliveryQueue({ dataDir: tempDir });
+    await queue.init({ autoProcess: false });
+
+    createEndpoint(
+      {
+        url: "https://example.com/webhook",
+        events: ["message.received"],
+      },
+      tempDir
+    );
+
+    const cpStore = new CheckpointStore({ dataDir: tempDir });
+    cpStore.load();
+    cpStore.setBootstrapped(true);
+    cpStore.save();
+
+    const missedMsg = createMockMsg({
+      id: "msg_autosweep_01",
+      from: "923001234567@c.us",
+      body: "Caught by periodic sweep",
+      timestamp: 1700000300,
+    });
+
+    const chat = createMockChat({
+      id: "923001234567@c.us",
+      name: "Dave",
+      messages: [missedMsg],
+    });
+
+    const service = createMockService({ chats: [chat] });
+
+    bridge = new WebhookBridge({
+      service,
+      queue,
+      dataDir: tempDir,
+      account: mockTapuAccount,
+      checkpointStore: cpStore,
+    });
+
+    const coordinator = new MessageRecoveryCoordinator({
+      bridge,
+      service,
+      checkpointStore: cpStore,
+      dataDir: tempDir,
+      autoSweep: true,
+      sweepIntervalMs: 50, // fast sweep for test
+    });
+    coordinator.start();
+
+    // Wait for auto-sweep interval to fire
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Check delivery queue
+    const deliveries = queue.listDeliveries().deliveries;
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].payload.data.messageId, "msg_autosweep_01");
+
+    coordinator.stop();
+  } finally {
+    if (bridge) bridge.stop();
+    if (queue) await queue.shutdown();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// -------------------------------------------------------------
+// Test 17: Outgoing messages (fromMe: true) do not advance chat checkpoint
+// -------------------------------------------------------------
+test("17. Outgoing messages (fromMe: true) do not advance chat checkpoint past un-reconciled incoming messages", async () => {
+  const tempDir = createTempDir();
+  let queue;
+  let bridge;
+
+  try {
+    queue = new DeliveryQueue({ dataDir: tempDir });
+    await queue.init({ autoProcess: false });
+
+    createEndpoint(
+      {
+        url: "https://example.com/webhook",
+        events: ["message.received"],
+      },
+      tempDir
+    );
+
+    const cpStore = new CheckpointStore({ dataDir: tempDir });
+    cpStore.load();
+    cpStore.setBootstrapped(true);
+    cpStore.updateChatCheckpoint("923001234567@c.us", {
+      lastMessageId: "msg_init",
+      lastTimestamp: 1000,
+    });
+    cpStore.save();
+
+    const service = createMockService();
+    bridge = new WebhookBridge({
+      service,
+      queue,
+      dataDir: tempDir,
+      account: mockTapuAccount,
+      checkpointStore: cpStore,
+    });
+
+    // Ingest an outgoing reply sent at ts 2000
+    bridge.ingestMessage({
+      id: "out_reply_01",
+      chatId: "923001234567@c.us",
+      fromMe: true,
+      timestamp: 2000,
+      body: "Outgoing reply sent from phone",
+    });
+
+    // Verify chat checkpoint was NOT bumped to 2000 by the outgoing message
+    const cp = cpStore.getChatCheckpoint("923001234567@c.us");
+    assert.equal(
+      cp.lastTimestamp,
+      1000,
+      "Checkpoint timestamp must not advance from outgoing message"
+    );
+    assert.equal(
+      cp.lastMessageId,
+      "msg_init",
+      "Checkpoint lastMessageId must not be overwritten by outgoing message"
+    );
+    assert.equal(
+      cpStore.isMessageProcessed("out_reply_01"),
+      true,
+      "Outgoing message ID must be marked processed"
+    );
+  } finally {
+    if (bridge) bridge.stop();
+    if (queue) await queue.shutdown();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
